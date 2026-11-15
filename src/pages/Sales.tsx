@@ -73,12 +73,12 @@ const Sales = () => {
             loading={isLoading}
           />
           <MetricCard
-            label="Pending payment"
+            label="Awaiting payment"
             value={pending.length}
             icon={<Clock className="h-6 w-6" />}
             tone="warning"
             loading={isLoading}
-            hint={pending.length > 0 && `${ksh(pending.reduce((s, x) => s + x.total, 0))} outstanding`}
+            hint={pending.length > 0 && `${ksh(pending.reduce((s, x) => s + x.balance, 0))} still owed`}
           />
         </div>
 
@@ -145,10 +145,11 @@ const Sales = () => {
                         </Badge>
                       )}
                       {ksh(s.total)}
+                      {s.balance > 0 && <p className="text-xs font-normal text-warning">{ksh(s.balance)} owed</p>}
                     </TableCell>
                     <TableCell>{s.paymentMethod}</TableCell>
                     <TableCell>
-                      <SaleStatusBadge status={s.status} />
+                      <SaleStatusBadge status={s.status} amountPaid={s.amountPaid} />
                     </TableCell>
                   </TableRow>
                 ))}

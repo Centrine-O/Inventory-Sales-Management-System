@@ -15,7 +15,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Plus, Search, MoreVertical, Edit, Trash2, Users, UserCheck, ShoppingBag, Wallet, Eye } from "lucide-react";
+import { Plus, Search, MoreVertical, Edit, Trash2, Users, UserCheck, HandCoins, Wallet, Eye } from "lucide-react";
 import { ConfirmDialog, MetricCard, PageHeader, TableLoading, TableMessage } from "@/components/common";
 import { CustomerDetailDialog, CustomerFormDialog } from "@/components/customers/CustomerDialogs";
 import { useCustomers, useDeleteCustomer } from "@/hooks/api";
@@ -44,14 +44,15 @@ const Customers = () => {
     return all.filter(
       (c) =>
         (!q || c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q) || c.phone.includes(q)) &&
-        (status === "all" || c.status === status),
+        (status === "all" || (status === "owing" ? c.balance > 0 : c.status === status)),
     );
   }, [all, search, status]);
 
   const totals = {
     count: all.length,
     active: all.filter((c) => c.status === "active").length,
-    orders: all.reduce((s, c) => s + c.totalOrders, 0),
+    owed: all.reduce((s, c) => s + c.balance, 0),
+    debtors: all.filter((c) => c.balance > 0).length,
     revenue: all.reduce((s, c) => s + c.totalSpent, 0),
   };
 
@@ -78,7 +79,14 @@ const Customers = () => {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <MetricCard label="Total customers" value={totals.count} icon={<Users className="h-6 w-6" />} loading={isLoading} />
           <MetricCard label="Active" value={totals.active} icon={<UserCheck className="h-6 w-6" />} tone="accent" loading={isLoading} />
-          <MetricCard label="Orders placed" value={totals.orders} icon={<ShoppingBag className="h-6 w-6" />} tone="warning" loading={isLoading} />
+          <MetricCard
+            label="Owed to you"
+            value={kshCompact(totals.owed)}
+            icon={<HandCoins className="h-6 w-6" />}
+            tone="warning"
+            loading={isLoading}
+            hint={totals.debtors > 0 && `${totals.debtors} customer${totals.debtors === 1 ? "" : "s"} with a balance`}
+          />
           <MetricCard label="Lifetime revenue" value={kshCompact(totals.revenue)} icon={<Wallet className="h-6 w-6" />} tone="accent" loading={isLoading} />
         </div>
 
@@ -104,6 +112,7 @@ const Customers = () => {
                     <SelectItem value="all">All</SelectItem>
                     <SelectItem value="active">Active</SelectItem>
                     <SelectItem value="inactive">Inactive</SelectItem>
+                    <SelectItem value="owing">Owing money</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -117,15 +126,16 @@ const Customers = () => {
                   <TableHead>Phone</TableHead>
                   <TableHead className="text-right">Orders</TableHead>
                   <TableHead className="text-right">Total spent</TableHead>
+                  <TableHead className="text-right">Balance</TableHead>
                   <TableHead>Last purchase</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="w-[50px]" />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isLoading && <TableLoading cols={7} />}
+                {isLoading && <TableLoading cols={8} />}
                 {!isLoading && filtered.length === 0 && (
-                  <TableMessage cols={7}>{all.length === 0 ? "No customers yet." : "No customers match these filters."}</TableMessage>
+                  <TableMessage cols={8}>{all.length === 0 ? "No customers yet." : "No customers match these filters."}</TableMessage>
                 )}
                 {filtered.map((c) => (
                   <TableRow key={c.id} className="cursor-pointer" onClick={() => setViewing(c.id)}>
@@ -143,6 +153,9 @@ const Customers = () => {
                     <TableCell className="whitespace-nowrap">{c.phone || "—"}</TableCell>
                     <TableCell className="text-right">{c.totalOrders}</TableCell>
                     <TableCell className="whitespace-nowrap text-right">{ksh(c.totalSpent)}</TableCell>
+                    <TableCell className={`whitespace-nowrap text-right ${c.balance > 0 ? "font-medium text-warning" : "text-muted-foreground"}`}>
+                      {c.balance > 0 ? ksh(c.balance) : "—"}
+                    </TableCell>
                     <TableCell className="whitespace-nowrap">{c.lastPurchaseAt ? formatDate(c.lastPurchaseAt) : "—"}</TableCell>
                     <TableCell>
                       <Badge variant={c.status === "active" ? "default" : "secondary"} className="capitalize">

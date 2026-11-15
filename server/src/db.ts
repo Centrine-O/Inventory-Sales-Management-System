@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS customers (
   email TEXT NOT NULL DEFAULT '',
   phone TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+  credit_limit_cents INTEGER NOT NULL DEFAULT 0 CHECK (credit_limit_cents >= 0),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -69,6 +70,17 @@ CREATE TABLE IF NOT EXISTS sale_items (
   line_total_cents INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id);
+
+CREATE TABLE IF NOT EXISTS payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+  amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+  method TEXT NOT NULL CHECK (method IN ('Cash', 'Card', 'M-Pesa', 'Bank Transfer')),
+  reference TEXT NOT NULL DEFAULT '',
+  user_id INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_payments_sale ON payments(sale_id);
 
 CREATE TABLE IF NOT EXISTS stock_movements (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -155,6 +167,18 @@ function migrate(db: DB) {
   if (!productCols.includes("supplier_id")) {
     db.exec("ALTER TABLE products ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)");
   }
+  const customerCols = (db.prepare("PRAGMA table_info(customers)").all() as { name: string }[]).map((c) => c.name);
+  if (!customerCols.includes("credit_limit_cents")) {
+    db.exec("ALTER TABLE customers ADD COLUMN credit_limit_cents INTEGER NOT NULL DEFAULT 0 CHECK (credit_limit_cents >= 0)");
+  }
+  // Sales paid in full before the payments ledger existed get one payment for their total.
+  db.exec(`
+    INSERT INTO payments (sale_id, amount_cents, method, reference, user_id, created_at)
+    SELECT s.id, s.total_cents, s.payment_method, 'Recorded at sale', s.user_id, s.created_at
+    FROM sales s
+    WHERE s.status = 'paid' AND s.total_cents > 0
+      AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.sale_id = s.id)
+  `);
 }
 
 export const toCents = (amount: number) => Math.round(amount * 100);

@@ -110,6 +110,8 @@ const addCustomer = db.prepare("INSERT INTO customers (name, email, phone, statu
 const customerIds = customerData.map(([n, e, p, s], i) =>
   Number(addCustomer.run(n, e, p, s, sqlDate(daysAgo(70 - i * 5))).lastInsertRowid),
 );
+db.prepare("UPDATE customers SET credit_limit_cents = ? WHERE name = ?").run(toCents(250000), "Nairobi Tech Hub Ltd");
+db.prepare("UPDATE customers SET credit_limit_cents = ? WHERE name = ?").run(toCents(50000), "John Kamau");
 
 const addSale = db.prepare(
   `INSERT INTO sales (invoice_no, customer_id, user_id, payment_method, status, subtotal_cents, discount_cents, tax_cents, total_cents, created_at)
@@ -119,6 +121,11 @@ const addItem = db.prepare(
   `INSERT INTO sale_items (sale_id, product_id, product_name, sku, category, quantity, unit_price_cents, unit_cost_cents, line_total_cents)
    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 );
+
+const addPayment = db.prepare(
+  "INSERT INTO payments (sale_id, amount_cents, method, reference, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+);
+const mpesaCode = () => "Q" + Array.from({ length: 9 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789"[int(0, 33)]).join("");
 
 const methods = ["Cash", "M-Pesa", "M-Pesa", "M-Pesa", "Card", "Bank Transfer"];
 let invoice = 0;
@@ -143,14 +150,31 @@ db.transaction(() => {
       const discount = rand() < 0.15 ? Math.round(subtotal * 0.05 / 100) * 100 : 0;
       const total = subtotal - discount;
       const tax = Math.round((total * 16) / 116);
-      const status = day <= 3 && rand() < 0.3 ? "pending" : rand() < 0.03 ? "cancelled" : "paid";
-      const customer = rand() < 0.3 ? null : pick(customerIds);
+      let customer = rand() < 0.3 ? null : pick(customerIds);
+      // Credit sales: mostly recent, a few older ones left unpaid so the debtors ageing report has data.
+      const credit = customer !== null && ((day <= 3 && rand() < 0.35) || (day > 30 && rand() < 0.09));
+      const status = credit ? "pending" : rand() < 0.03 ? "cancelled" : "paid";
+      if (status === "pending" && customer === null) customer = pick(customerIds);
       const no = `INV-${String(++invoice).padStart(5, "0")}`;
       const created = sqlDate(when);
+      const method = pick(methods);
+      const seller = rand() < 0.6 ? cashierId : adminId;
       const saleId = Number(
-        addSale.run(no, customer, rand() < 0.6 ? cashierId : adminId, pick(methods), status, subtotal, discount, tax, total, created)
-          .lastInsertRowid,
+        addSale.run(no, customer, seller, method, status, subtotal, discount, tax, total, created).lastInsertRowid,
       );
+      if (status === "paid") {
+        addPayment.run(saleId, total, method, method === "M-Pesa" ? mpesaCode() : "Paid at sale", seller, created);
+      } else if (status === "pending" && rand() < 0.5) {
+        // Deposit now, sometimes an instalment later.
+        const deposit = Math.round((total * int(20, 50)) / 100 / 100) * 100;
+        if (deposit > 0 && deposit < total) {
+          addPayment.run(saleId, deposit, method, "Deposit", seller, created);
+          if (day > 30 && rand() < 0.6) {
+            const later = Math.round(((total - deposit) * 0.4) / 100) * 100;
+            if (later > 0) addPayment.run(saleId, later, "M-Pesa", mpesaCode(), adminId, sqlDate(daysAgo(day - 14, 12)));
+          }
+        }
+      }
       for (const [p, q] of lines) {
         addItem.run(saleId, p.id, p.name, p.sku, p.category, q, p.price, p.cost, p.price * q);
         if (status !== "cancelled") {

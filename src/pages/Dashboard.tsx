@@ -134,7 +134,7 @@ const Dashboard = () => {
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1">
                     <p className="font-semibold">{ksh(s.total)}</p>
-                    <SaleStatusBadge status={s.status} />
+                    <SaleStatusBadge status={s.status} amountPaid={s.amountPaid} />
                   </div>
                 </button>
               ))}

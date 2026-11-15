@@ -11,7 +11,8 @@ import { Download, TrendingUp, Wallet, Receipt, PiggyBank, Clock, Boxes, Loader2
 import { toast } from "sonner";
 import { MetricCard, PageHeader } from "@/components/common";
 import { DailyRevenueArea, RankedBars } from "@/components/charts";
-import { useReport } from "@/hooks/api";
+import { useReceivables, useReport } from "@/hooks/api";
+import { Link } from "react-router-dom";
 import { api, errorMessage, qs } from "@/lib/api";
 import { ksh, kshCompact, pct, ymd } from "@/lib/format";
 
@@ -33,6 +34,82 @@ const ChangeHint = ({ value }: { value: number | null }) => {
     </span>
   );
 };
+
+function ReceivablesCard() {
+  const { data, isLoading } = useReceivables();
+  if (isLoading || !data) return <Skeleton className="h-64 rounded-xl" />;
+  const buckets: [string, number, string][] = [
+    ["0–30 days", data.totals.current, "text-foreground"],
+    ["31–60 days", data.totals.days31to60, "text-warning"],
+    ["61–90 days", data.totals.days61to90, "text-warning"],
+    ["Over 90 days", data.totals.over90, "text-destructive"],
+  ];
+  return (
+    <Card className="shadow-medium">
+      <CardHeader className="flex flex-row items-start justify-between space-y-0">
+        <div>
+          <CardTitle>Owed to you</CardTitle>
+          <p className="mt-1 text-sm text-muted-foreground">Unpaid credit sales today, by how long they've been outstanding.</p>
+        </div>
+        <p className="text-2xl font-bold">{ksh(data.totals.total)}</p>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {buckets.map(([label, value, tone]) => (
+            <div key={label} className="rounded-xl border p-3">
+              <p className="text-xs text-muted-foreground">{label}</p>
+              <p className={`font-semibold ${value > 0 ? tone : "text-muted-foreground"}`}>{ksh(value)}</p>
+            </div>
+          ))}
+        </div>
+        {data.customers.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nobody owes you anything right now.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Customer</TableHead>
+                  <TableHead className="text-right">Invoices</TableHead>
+                  <TableHead className="text-right">Oldest</TableHead>
+                  <TableHead className="text-right">Over 30 days</TableHead>
+                  <TableHead className="text-right">Total owed</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.customers.map((c) => {
+                  const overdue = c.days31to60 + c.days61to90 + c.over90;
+                  return (
+                    <TableRow key={c.customerId ?? "walk-in"}>
+                      <TableCell>
+                        {c.customerId ? (
+                          <Link to={`/app/customers?view=${c.customerId}`} className="font-medium text-primary hover:underline">
+                            {c.name}
+                          </Link>
+                        ) : (
+                          <span className="font-medium">{c.name}</span>
+                        )}
+                        {c.phone && <p className="text-xs text-muted-foreground">{c.phone}</p>}
+                      </TableCell>
+                      <TableCell className="text-right">{c.invoices}</TableCell>
+                      <TableCell className={`whitespace-nowrap text-right ${c.oldestDays > 30 ? "text-warning" : ""}`}>
+                        {c.oldestDays === 0 ? "today" : `${c.oldestDays} day${c.oldestDays === 1 ? "" : "s"}`}
+                      </TableCell>
+                      <TableCell className={`whitespace-nowrap text-right ${overdue > 0 ? "font-medium text-warning" : "text-muted-foreground"}`}>
+                        {overdue > 0 ? ksh(overdue) : "—"}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-right font-semibold">{ksh(c.total)}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 const Reports = () => {
   const [preset, setPreset] = useState("30d");
@@ -172,6 +249,8 @@ const Reports = () => {
           </CardHeader>
           <CardContent>{loading ? <Skeleton className="h-[280px] w-full" /> : <DailyRevenueArea data={data.daily} />}</CardContent>
         </Card>
+
+        <ReceivablesCard />
 
         <div className="grid gap-6 xl:grid-cols-2">
           <Card className="shadow-medium">

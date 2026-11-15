@@ -53,6 +53,9 @@ export interface Customer {
   totalOrders: number;
   totalSpent: number;
   lastPurchaseAt: string | null;
+  creditLimit: number;
+  balance: number;
+  oldestUnpaidAt: string | null;
   createdAt: string;
 }
 
@@ -72,6 +75,8 @@ export interface Sale {
   discount: number;
   tax: number;
   total: number;
+  amountPaid: number;
+  balance: number;
   notes: string;
   itemCount: number;
   createdAt: string;
@@ -87,13 +92,37 @@ export interface SaleItem {
   lineTotal: number;
 }
 
+export interface Payment {
+  id: number;
+  amount: number;
+  method: PaymentMethod;
+  reference: string;
+  receivedBy: string;
+  createdAt: string;
+}
+
 export interface SaleDetail extends Sale {
   customer: { name: string; email: string; phone: string } | null;
   items: SaleItem[];
+  payments: Payment[];
 }
 
 export interface CustomerDetail extends Customer {
   sales: Sale[];
+  payments: { id: number; saleId: number; invoiceNo: string; amount: number; method: PaymentMethod; reference: string; createdAt: string }[];
+}
+
+export interface AgingBuckets {
+  current: number;
+  days31to60: number;
+  days61to90: number;
+  over90: number;
+  total: number;
+}
+
+export interface Receivables {
+  totals: AgingBuckets;
+  customers: (AgingBuckets & { customerId: number | null; name: string; phone: string; invoices: number; oldestDays: number })[];
 }
 
 export interface DayPoint {

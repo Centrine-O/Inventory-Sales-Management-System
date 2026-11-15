@@ -62,7 +62,7 @@ export function createApp(db: DB, opts: { staticDir?: string } = {}) {
   api.use("/sales", salesRouter(db));
   api.use("/settings", settingsRouter(db));
   api.use("/dashboard", dashboardRouter(db));
-  api.use("/reports", reportsRouter(db));
+  api.use("/reports", requireRole("admin"), reportsRouter(db));
   api.use("/search", searchRouter(db));
   api.use("/suppliers", requireRole("admin"), suppliersRouter(db));
   api.use("/purchase-orders", requireRole("admin"), purchaseOrdersRouter(db));

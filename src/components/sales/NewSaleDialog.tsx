@@ -44,6 +44,7 @@ export function NewSaleDialog({
   const [payment, setPayment] = useState<PaymentMethod>("M-Pesa");
   const [status, setStatus] = useState<"paid" | "pending">("paid");
   const [discount, setDiscount] = useState("");
+  const [deposit, setDeposit] = useState("");
   const [notes, setNotes] = useState("");
 
   useEffect(() => {
@@ -53,6 +54,7 @@ export function NewSaleDialog({
       setPayment("M-Pesa");
       setStatus("paid");
       setDiscount("");
+      setDeposit("");
       setNotes("");
     }
   }, [open]);
@@ -80,11 +82,19 @@ export function NewSaleDialog({
   const taxRate = settings?.taxRate ?? 16;
   const vat = taxRate > 0 ? (total * taxRate) / (100 + taxRate) : 0;
 
+  const customer = customers.find((c) => String(c.id) === customerId) ?? null;
+  const onCredit = status === "pending";
+  const depositNum = onCredit ? Math.max(0, Number(deposit) || 0) : total;
+  const owedAfter = (customer?.balance ?? 0) + Math.max(0, total - depositNum);
+  const overLimit = onCredit && customer !== null && customer.creditLimit > 0 && owedAfter > customer.creditLimit;
+
   const overStock = lines.filter((l) => l.quantity > (stockById.get(l.product.id) ?? 0));
   const problems = [
     lines.length === 0 && "Add at least one product",
     overStock.length > 0 && `Not enough stock for ${overStock.map((l) => l.product.name).join(", ")}`,
     discountNum > subtotal && "Discount is larger than the subtotal",
+    onCredit && customer === null && "Choose a customer to sell on credit",
+    overLimit && `Over ${customer!.name}'s credit limit of ${ksh(customer!.creditLimit)}`,
   ].filter(Boolean) as string[];
 
   const submit = () =>
@@ -93,6 +103,7 @@ export function NewSaleDialog({
         customerId: customerId === WALK_IN ? null : Number(customerId),
         paymentMethod: payment,
         status,
+        amountPaid: onCredit ? depositNum : 0,
         discount: discountNum,
         notes,
         items: lines.map((l) => ({ productId: l.product.id, quantity: l.quantity })),
@@ -264,13 +275,35 @@ export function NewSaleDialog({
                   <Label>Payment status</Label>
                   <RadioGroup value={status} onValueChange={(v) => setStatus(v as "paid" | "pending")} className="flex gap-6">
                     <label className="flex items-center gap-2 text-sm">
-                      <RadioGroupItem value="paid" /> Paid now
+                      <RadioGroupItem value="paid" /> Paid in full
                     </label>
                     <label className="flex items-center gap-2 text-sm">
-                      <RadioGroupItem value="pending" /> Pending (on credit)
+                      <RadioGroupItem value="pending" /> On credit
                     </label>
                   </RadioGroup>
                 </div>
+                {onCredit && (
+                  <div className="space-y-2 rounded-xl border border-warning/40 bg-warning/5 p-3">
+                    <Label htmlFor="sale-deposit">Deposit paid now (KSh, optional)</Label>
+                    <Input
+                      id="sale-deposit"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="0"
+                      value={deposit}
+                      onChange={(e) => setDeposit(e.target.value)}
+                    />
+                    {customer ? (
+                      <p className={cn("text-xs", overLimit ? "text-destructive" : "text-muted-foreground")}>
+                        {customer.name} owes {ksh(customer.balance)} now, {ksh(owedAfter)} after this sale
+                        {customer.creditLimit > 0 ? ` · limit ${ksh(customer.creditLimit)}` : " · no credit limit"}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Pick the customer above so the balance can be followed up.</p>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="space-y-4">
@@ -302,6 +335,18 @@ export function NewSaleDialog({
                     <span>Total</span>
                     <span>{kshExact(total)}</span>
                   </div>
+                  {onCredit && (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Paid now</span>
+                        <span>{kshExact(Math.min(depositNum, total))}</span>
+                      </div>
+                      <div className="flex justify-between font-semibold text-warning">
+                        <span>Balance on credit</span>
+                        <span>{kshExact(Math.max(0, total - depositNum))}</span>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -314,7 +359,7 @@ export function NewSaleDialog({
             </Button>
             <Button onClick={submit} disabled={problems.length > 0 || create.isPending} className="bg-gradient-primary hover:bg-primary-dark">
               {create.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Record sale · {ksh(total)}
+              {onCredit ? `Record credit sale · ${ksh(Math.max(0, total - depositNum))} owed` : `Record sale · ${ksh(total)}`}
             </Button>
           </DialogFooter>
         </DialogContent>

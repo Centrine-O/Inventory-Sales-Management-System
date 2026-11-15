@@ -26,8 +26,9 @@ export function buildReport(db: DB, from: string, to: string) {
       .prepare(
         `SELECT COUNT(*) AS orders,
            COALESCE(SUM(total_cents), 0) AS revenue,
-           COALESCE(SUM(CASE WHEN status = 'paid' THEN total_cents ELSE 0 END), 0) AS collected,
-           COALESCE(SUM(CASE WHEN status = 'pending' THEN total_cents ELSE 0 END), 0) AS outstanding,
+           COALESCE(SUM((SELECT COALESCE(SUM(amount_cents), 0) FROM payments WHERE sale_id = s.id)), 0) AS collected,
+           COALESCE(SUM(CASE WHEN status = 'pending'
+             THEN total_cents - (SELECT COALESCE(SUM(amount_cents), 0) FROM payments WHERE sale_id = s.id) ELSE 0 END), 0) AS outstanding,
            COALESCE(SUM(tax_cents), 0) AS tax,
            COALESCE(SUM(discount_cents), 0) AS discounts
          FROM sales s WHERE ${VALID}`,
@@ -140,8 +141,74 @@ export function buildReport(db: DB, from: string, to: string) {
   };
 }
 
+/**
+ * Who owes what, aged by the date of each unpaid sale. Not date-filtered: a balance is owed until it's paid.
+ */
+export function buildReceivables(db: DB) {
+  const rows = db
+    .prepare(
+      `SELECT s.id, s.invoice_no, s.customer_id, COALESCE(c.name, 'Walk-in customer') AS customer_name, c.phone,
+         s.total_cents - (SELECT COALESCE(SUM(amount_cents), 0) FROM payments WHERE sale_id = s.id) AS balance,
+         CAST(julianday('now', 'localtime') - julianday(s.created_at, 'localtime') AS INTEGER) AS age_days,
+         s.created_at
+       FROM sales s LEFT JOIN customers c ON c.id = s.customer_id
+       WHERE s.status = 'pending'`,
+    )
+    .all() as {
+    id: number;
+    invoice_no: string;
+    customer_id: number | null;
+    customer_name: string;
+    phone: string | null;
+    balance: number;
+    age_days: number;
+    created_at: string;
+  }[];
+
+  const bucketOf = (age: number) => (age <= 30 ? "current" : age <= 60 ? "days31to60" : age <= 90 ? "days61to90" : "over90");
+  const empty = () => ({ current: 0, days31to60: 0, days61to90: 0, over90: 0 });
+  const totals = empty();
+  const byCustomer = new Map<
+    string,
+    { customerId: number | null; name: string; phone: string; invoices: number; oldestDays: number; buckets: ReturnType<typeof empty> }
+  >();
+
+  for (const r of rows) {
+    if (r.balance <= 0) continue;
+    const b = bucketOf(r.age_days);
+    totals[b] += r.balance;
+    const key = String(r.customer_id ?? "walk-in");
+    if (!byCustomer.has(key)) {
+      byCustomer.set(key, { customerId: r.customer_id, name: r.customer_name, phone: r.phone ?? "", invoices: 0, oldestDays: 0, buckets: empty() });
+    }
+    const c = byCustomer.get(key)!;
+    c.invoices += 1;
+    c.oldestDays = Math.max(c.oldestDays, r.age_days);
+    c.buckets[b] += r.balance;
+  }
+
+  const money = (b: ReturnType<typeof empty>) => ({
+    current: fromCents(b.current),
+    days31to60: fromCents(b.days31to60),
+    days61to90: fromCents(b.days61to90),
+    over90: fromCents(b.over90),
+    total: fromCents(b.current + b.days31to60 + b.days61to90 + b.over90),
+  });
+
+  return {
+    totals: money(totals),
+    customers: [...byCustomer.values()]
+      .map((c) => ({ customerId: c.customerId, name: c.name, phone: c.phone, invoices: c.invoices, oldestDays: c.oldestDays, ...money(c.buckets) }))
+      .sort((a, b) => b.total - a.total),
+  };
+}
+
 export function reportsRouter(db: DB) {
   const r = Router();
+
+  r.get("/receivables", (_req, res) => {
+    res.json(buildReceivables(db));
+  });
 
   r.get("/", (req, res) => {
     const { from, to } = parseRange(req);

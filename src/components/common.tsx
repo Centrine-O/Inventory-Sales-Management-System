@@ -81,17 +81,18 @@ export const StockBadge = ({ status }: { status: StockStatus }) => (
   </Badge>
 );
 
-export const SaleStatusBadge = ({ status }: { status: SaleStatus }) => (
+/** Pass amountPaid to distinguish "Part paid" credit sales from ones with nothing paid yet. */
+export const SaleStatusBadge = ({ status, amountPaid = 0 }: { status: SaleStatus; amountPaid?: number }) => (
   <Badge
     variant="outline"
     className={cn(
-      "border-transparent",
+      "whitespace-nowrap border-transparent",
       status === "paid" && "bg-accent/10 text-accent",
       status === "pending" && "bg-warning/15 text-warning",
       status === "cancelled" && "bg-muted text-muted-foreground line-through",
     )}
   >
-    {SALE_STATUS_LABEL[status]}
+    {status === "pending" && amountPaid > 0 ? "Part paid" : SALE_STATUS_LABEL[status]}
   </Badge>
 );
 

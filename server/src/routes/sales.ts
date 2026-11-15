@@ -3,7 +3,7 @@ import { z } from "zod";
 import { fromCents, toCents, type DB } from "../db.js";
 import { HttpError, currentUser, idParam } from "../http.js";
 import { getSettings } from "./settings.js";
-import { SALE_SELECT, mapSale, toCsv, type ProductRow, type SaleRow } from "../mappers.js";
+import { SALE_SELECT, iso, mapSale, toCsv, type ProductRow, type SaleRow } from "../mappers.js";
 
 const PAYMENT_METHODS = ["Cash", "Card", "M-Pesa", "Bank Transfer"] as const;
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "must be YYYY-MM-DD");
@@ -12,6 +12,8 @@ const createSchema = z.object({
   customerId: z.coerce.number().int().positive().nullable().default(null),
   paymentMethod: z.enum(PAYMENT_METHODS),
   status: z.enum(["paid", "pending"]).default("paid"),
+  /** Deposit taken now on a credit (pending) sale. Ignored for paid sales, which are paid in full. */
+  amountPaid: z.coerce.number().min(0).default(0),
   discount: z.coerce.number().min(0).default(0),
   notes: z.string().trim().max(500).default(""),
   items: z
@@ -33,6 +35,36 @@ const listSchema = z.object({
 });
 
 const statusSchema = z.object({ status: z.enum(["paid", "cancelled"]) });
+
+const paymentSchema = z.object({
+  amount: z.coerce.number().positive("must be greater than zero"),
+  method: z.enum(PAYMENT_METHODS),
+  reference: z.string().trim().max(100).default(""),
+});
+
+/** Outstanding amount on a sale, from the payments ledger. */
+export function saleBalanceCents(db: DB, saleId: number) {
+  return (
+    db
+      .prepare(
+        `SELECT s.total_cents - COALESCE((SELECT SUM(amount_cents) FROM payments WHERE sale_id = s.id), 0) AS bal
+         FROM sales s WHERE s.id = ?`,
+      )
+      .get(saleId) as { bal: number }
+  ).bal;
+}
+
+/** Sum of balances on a customer's open credit sales. */
+export function customerBalanceCents(db: DB, customerId: number) {
+  return (
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(s.total_cents - COALESCE((SELECT SUM(amount_cents) FROM payments WHERE sale_id = s.id), 0)), 0) AS bal
+         FROM sales s WHERE s.customer_id = ? AND s.status = 'pending'`,
+      )
+      .get(customerId) as { bal: number }
+  ).bal;
+}
 
 function buildFilter(q: z.infer<typeof listSchema>) {
   const where: string[] = [];
@@ -81,9 +113,23 @@ export function salesRouter(db: DB) {
           phone: string;
         })
       : null;
+    const payments = db
+      .prepare(
+        `SELECT p.id, p.amount_cents, p.method, p.reference, p.created_at, u.name AS user_name
+         FROM payments p LEFT JOIN users u ON u.id = p.user_id WHERE p.sale_id = ? ORDER BY p.id`,
+      )
+      .all(id) as { id: number; amount_cents: number; method: string; reference: string; created_at: string; user_name: string | null }[];
     return {
       ...mapSale(row),
       customer,
+      payments: payments.map((p) => ({
+        id: p.id,
+        amount: fromCents(p.amount_cents),
+        method: p.method,
+        reference: p.reference,
+        receivedBy: p.user_name ?? "",
+        createdAt: iso(p.created_at),
+      })),
       items: items.map((i) => ({
         id: i.id,
         productId: i.product_id,
@@ -112,7 +158,7 @@ export function salesRouter(db: DB) {
       .prepare(`${SALE_SELECT} ${where} ORDER BY s.id DESC LIMIT 100000`)
       .all(...params) as SaleRow[];
     const csv = toCsv(
-      ["Invoice", "Date", "Customer", "Cashier", "Items", "Subtotal", "Discount", "VAT", "Total", "Payment", "Status"],
+      ["Invoice", "Date", "Customer", "Cashier", "Items", "Subtotal", "Discount", "VAT", "Total", "Paid", "Balance", "Payment", "Status"],
       rows.map((row) => {
         const s = mapSale(row);
         return [
@@ -125,6 +171,8 @@ export function salesRouter(db: DB) {
           s.discount.toFixed(2),
           s.tax.toFixed(2),
           s.total.toFixed(2),
+          s.amountPaid.toFixed(2),
+          s.balance.toFixed(2),
           s.paymentMethod,
           s.status,
         ];
@@ -145,9 +193,12 @@ export function salesRouter(db: DB) {
     const { taxRate } = getSettings(db) as { taxRate: number };
 
     const saleId = db.transaction(() => {
+      let customer: { name: string; credit_limit_cents: number } | undefined;
       if (body.customerId !== null) {
-        const exists = db.prepare("SELECT 1 FROM customers WHERE id = ?").get(body.customerId);
-        if (!exists) throw new HttpError(400, "Customer not found");
+        customer = db.prepare("SELECT name, credit_limit_cents FROM customers WHERE id = ?").get(body.customerId) as
+          | { name: string; credit_limit_cents: number }
+          | undefined;
+        if (!customer) throw new HttpError(400, "Customer not found");
       }
 
       // Merge duplicate lines so stock checks see the true requested quantity.
@@ -170,6 +221,26 @@ export function salesRouter(db: DB) {
       // Prices are VAT-inclusive (standard for Kenyan retail); record the VAT portion of the total.
       const tax = taxRate > 0 ? Math.round((total * taxRate) / (100 + taxRate)) : 0;
 
+      // A deposit that covers the whole total simply makes it a paid sale.
+      let status = body.status;
+      let paidNow = status === "paid" ? total : toCents(body.amountPaid);
+      if (status === "pending" && paidNow >= total) {
+        status = "paid";
+        paidNow = total;
+      }
+      if (status === "pending") {
+        if (!customer) throw new HttpError(400, "Choose a customer for sales on credit, so the balance can be followed up");
+        const limit = customer.credit_limit_cents;
+        const owed = customerBalanceCents(db, body.customerId!);
+        if (limit > 0 && owed + (total - paidNow) > limit) {
+          throw new HttpError(
+            409,
+            `This would take ${customer.name} over their credit limit of KSh ${fromCents(limit).toLocaleString()} ` +
+              `(currently owes KSh ${fromCents(owed).toLocaleString()})`,
+          );
+        }
+      }
+
       const next = (db.prepare("SELECT COALESCE(MAX(id), 0) + 1 AS n FROM sales").get() as { n: number }).n;
       const invoiceNo = `INV-${String(next).padStart(5, "0")}`;
 
@@ -179,8 +250,17 @@ export function salesRouter(db: DB) {
              subtotal_cents, discount_cents, tax_cents, total_cents, notes)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(invoiceNo, body.customerId, me.id, body.paymentMethod, body.status, subtotal, discount, tax, total, body.notes);
+        .run(invoiceNo, body.customerId, me.id, body.paymentMethod, status, subtotal, discount, tax, total, body.notes);
       const id = Number(info.lastInsertRowid);
+      if (paidNow > 0) {
+        db.prepare("INSERT INTO payments (sale_id, amount_cents, method, reference, user_id) VALUES (?, ?, ?, ?, ?)").run(
+          id,
+          paidNow,
+          body.paymentMethod,
+          status === "paid" ? "Paid at sale" : "Deposit",
+          me.id,
+        );
+      }
 
       const insertItem = db.prepare(
         `INSERT INTO sale_items (sale_id, product_id, product_name, sku, category, quantity, unit_price_cents, unit_cost_cents, line_total_cents)
@@ -207,8 +287,8 @@ export function salesRouter(db: DB) {
     const me = currentUser(req);
 
     db.transaction(() => {
-      const sale = db.prepare("SELECT id, invoice_no, status FROM sales WHERE id = ?").get(id) as
-        | { id: number; invoice_no: string; status: string }
+      const sale = db.prepare("SELECT id, invoice_no, status, payment_method FROM sales WHERE id = ?").get(id) as
+        | { id: number; invoice_no: string; status: string; payment_method: string }
         | undefined;
       if (!sale) throw new HttpError(404, "Sale not found");
       if (sale.status === "cancelled") throw new HttpError(400, "Cancelled sales cannot be changed");
@@ -230,10 +310,48 @@ export function salesRouter(db: DB) {
           ).run(it.product_id, it.quantity, sale.invoice_no, me.id);
         }
       }
+      if (status === "paid") {
+        // Settle whatever is still owed in one payment.
+        const balance = saleBalanceCents(db, id);
+        if (balance > 0) {
+          db.prepare("INSERT INTO payments (sale_id, amount_cents, method, reference, user_id) VALUES (?, ?, ?, 'Balance settled', ?)").run(
+            id,
+            balance,
+            sale.payment_method,
+            me.id,
+          );
+        }
+      }
       db.prepare("UPDATE sales SET status = ? WHERE id = ?").run(status, id);
     })();
 
     res.json(getSale(id));
+  });
+
+  /** Record a (partial) payment against a credit sale. Fully paid sales flip to "paid". */
+  r.post("/:id/payments", (req, res) => {
+    const id = idParam(req);
+    const body = paymentSchema.parse(req.body);
+    const me = currentUser(req);
+    db.transaction(() => {
+      const sale = db.prepare("SELECT status FROM sales WHERE id = ?").get(id) as { status: string } | undefined;
+      if (!sale) throw new HttpError(404, "Sale not found");
+      if (sale.status !== "pending") throw new HttpError(400, `This sale is ${sale.status}; nothing is owed`);
+      const balance = saleBalanceCents(db, id);
+      const amount = toCents(body.amount);
+      if (amount > balance) {
+        throw new HttpError(400, `Payment is more than the balance of KSh ${fromCents(balance).toLocaleString()}`);
+      }
+      db.prepare("INSERT INTO payments (sale_id, amount_cents, method, reference, user_id) VALUES (?, ?, ?, ?, ?)").run(
+        id,
+        amount,
+        body.method,
+        body.reference,
+        me.id,
+      );
+      if (amount === balance) db.prepare("UPDATE sales SET status = 'paid' WHERE id = ?").run(id);
+    })();
+    res.status(201).json(getSale(id));
   });
 
   return r;

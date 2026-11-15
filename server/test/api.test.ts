@@ -150,14 +150,15 @@ describe("sales", () => {
 
   it("marks pending sales paid; only admins cancel, and cancelling restores stock once", async () => {
     const p = await makeProduct({ stock: 5 });
-    const sale = (await request(app).post("/api/sales").set("Authorization", cashier).send({ paymentMethod: "Card", status: "pending", items: [{ productId: p.id, quantity: 2 }] })).body;
+    const cust = (await request(app).post("/api/customers").set("Authorization", admin).send({ name: "Credit Buyer" })).body;
+    const sale = (await request(app).post("/api/sales").set("Authorization", cashier).send({ customerId: cust.id, paymentMethod: "Card", status: "pending", items: [{ productId: p.id, quantity: 2 }] })).body;
     expect((await request(app).patch(`/api/sales/${sale.id}/status`).set("Authorization", cashier).send({ status: "cancelled" })).status).toBe(403);
     const cancelled = await request(app).patch(`/api/sales/${sale.id}/status`).set("Authorization", admin).send({ status: "cancelled" });
     expect(cancelled.body.status).toBe("cancelled");
     expect((await request(app).patch(`/api/sales/${sale.id}/status`).set("Authorization", admin).send({ status: "cancelled" })).status).toBe(400);
     expect((await request(app).get(`/api/products/${p.id}`).set("Authorization", admin)).body.stock).toBe(5);
 
-    const sale2 = (await request(app).post("/api/sales").set("Authorization", cashier).send({ paymentMethod: "Card", status: "pending", items: [{ productId: p.id, quantity: 1 }] })).body;
+    const sale2 = (await request(app).post("/api/sales").set("Authorization", cashier).send({ customerId: cust.id, paymentMethod: "Card", status: "pending", items: [{ productId: p.id, quantity: 1 }] })).body;
     const paid = await request(app).patch(`/api/sales/${sale2.id}/status`).set("Authorization", cashier).send({ status: "paid" });
     expect(paid.body.status).toBe("paid");
   });

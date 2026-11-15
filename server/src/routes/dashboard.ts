@@ -28,7 +28,11 @@ export function dashboardRouter(db: DB) {
     const todayStats = revenue(today, today);
 
     const pending = db
-      .prepare("SELECT COUNT(*) AS n, COALESCE(SUM(total_cents), 0) AS cents FROM sales WHERE status = 'pending'")
+      .prepare(
+        `SELECT COUNT(*) AS n,
+           COALESCE(SUM(total_cents - (SELECT COALESCE(SUM(amount_cents), 0) FROM payments WHERE sale_id = s.id)), 0) AS cents
+         FROM sales s WHERE status = 'pending'`,
+      )
       .get() as { n: number; cents: number };
 
     const inv = db

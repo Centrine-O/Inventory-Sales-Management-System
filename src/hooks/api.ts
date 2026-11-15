@@ -11,6 +11,7 @@ import type {
   ProductDetail,
   PurchaseOrder,
   PurchaseOrderDetail,
+  Receivables,
   ReorderGroup,
   Report,
   Sale,
@@ -116,7 +117,7 @@ export function useDeleteProduct() {
 
 // ---------- Customers ----------
 
-export const useCustomers = (filters: { search?: string; status?: string } = {}) =>
+export const useCustomers = (filters: { search?: string; status?: string; withBalance?: string } = {}) =>
   useQuery({
     queryKey: ["customers", filters],
     queryFn: () => api.get<Customer[]>(`/customers${qs(filters)}`),
@@ -135,6 +136,7 @@ export interface CustomerInput {
   email: string;
   phone: string;
   status: "active" | "inactive";
+  creditLimit?: number;
 }
 
 export function useSaveCustomer() {
@@ -182,6 +184,7 @@ export interface SaleInput {
   customerId: number | null;
   paymentMethod: PaymentMethod;
   status: "paid" | "pending";
+  amountPaid: number;
   discount: number;
   notes: string;
   items: { productId: number; quantity: number }[];
@@ -198,6 +201,22 @@ export function useCreateSale() {
     onError,
   });
 }
+
+export function useRecordPayment() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ saleId, ...body }: { saleId: number; amount: number; method: PaymentMethod; reference: string }) =>
+      api.post<SaleDetail>(`/sales/${saleId}/payments`, body),
+    onSuccess: (s, vars) => {
+      invalidate([["sales"], ["sale"], ["customers"], ["customer"], ["dashboard"], ["reports"]]);
+      toast.success(s.status === "paid" ? `${s.invoiceNo} is now fully paid` : `Payment of KSh ${vars.amount.toLocaleString()} recorded`);
+    },
+    onError,
+  });
+}
+
+export const useReceivables = (enabled = true) =>
+  useQuery({ queryKey: ["reports", "receivables"], queryFn: () => api.get<Receivables>("/reports/receivables"), enabled });
 
 export function useUpdateSaleStatus() {
   const invalidate = useInvalidate();
