@@ -28,6 +28,7 @@ Demo accounts (created by the seed):
 - **Sales (POS)** — searchable cart, live stock checks, walk-in or named customer (add one inline), Cash / M-Pesa / Card / Bank Transfer, paid or pending (credit), discounts, VAT shown as included. Recording a sale deducts stock atomically; cancelling one (admin) restores it. Printable invoices, CSV export, date/status filters, optional large-transaction review flag.
 - **Suppliers & purchasing** (admin) — supplier directory with each product's preferred supplier; purchase orders that go draft → ordered → partly received → received (or cancelled); receiving goods raises stock, logs a restock movement against the PO, and updates unit cost as a weighted average. Reorder suggestions group low-stock items by supplier (net of quantities already on order) and turn into a draft PO in one click. Printable POs, overdue-delivery tracking.
 - **Credit & payments** — sell on credit to a named customer with an optional deposit; record instalments by Cash, M-Pesa (with transaction code), Card or Bank Transfer until the invoice flips to paid. Per-customer credit limits (admin-set) are enforced at checkout. Every payment is kept in a ledger shown on the invoice and the customer's statement; Reports shows who owes what, aged 0–30 / 31–60 / 61–90 / 90+ days.
+- **Returns & refunds** (admin) — return some or all items from a sale, valued at the discounted price actually paid. Each item goes back to stock or is written off as damaged. A return first reduces anything still owed on the sale; only overpayment is refunded (Cash, M-Pesa with code, Card or Bank Transfer). Reports net returns out of revenue, profit and product/category figures in the period they happen. Sales with returns can't be cancelled.
 - **Customers** — contact details, active/inactive, lifetime orders and spend, purchase history.
 - **Dashboard** — month-to-date revenue vs the same span last month, today's sales, pending payments, 7-day revenue chart, recent sales, low-stock watchlist.
 - **Reports** (admin) — any date range: revenue, orders, average order, gross profit and margin (using cost captured at sale time), collected vs outstanding, daily trend, revenue by category and payment method, top products and customers, inventory value. CSV export.
@@ -41,7 +42,7 @@ Demo accounts (created by the seed):
 | Record sales and credit payments             | ✓ | ✓ |
 | View products, add/edit customers            | ✓ | ✓ |
 | Manage products & stock, delete customers    |   | ✓ |
-| Cancel sales, view reports, change settings  |   | ✓ |
+| Cancel sales, process returns, view reports, change settings |   | ✓ |
 | Set customer credit limits                   |   | ✓ |
 | Suppliers and purchase orders                |   | ✓ |
 | Manage staff accounts                        |   | ✓ |
@@ -98,6 +99,8 @@ GET    /customers[?search&status]  POST /customers         GET/PATCH/DELETE /cus
 GET    /sales[?search&status&from&to]       POST /sales     GET /sales/:id
 PATCH  /sales/:id/status {paid|cancelled}   GET  /sales/export.csv
 POST   /sales/:id/payments {amount, method, reference}
+POST   /sales/:id/returns {items: [{saleItemId, quantity, restock}], reason, refundMethod?, refundReference}   (admin)
+GET    /returns[?search&from&to]
 GET    /reports/receivables (admin)        GET /customers?withBalance=true
 GET    /dashboard                  GET  /reports[?from&to] GET  /reports/export.csv
 GET    /settings                   PUT  /settings          GET  /search?q=

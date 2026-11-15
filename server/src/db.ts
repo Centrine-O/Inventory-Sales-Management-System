@@ -82,11 +82,35 @@ CREATE TABLE IF NOT EXISTS payments (
 );
 CREATE INDEX IF NOT EXISTS idx_payments_sale ON payments(sale_id);
 
+CREATE TABLE IF NOT EXISTS returns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  return_no TEXT NOT NULL UNIQUE,
+  sale_id INTEGER NOT NULL REFERENCES sales(id),
+  reason TEXT NOT NULL DEFAULT '',
+  value_cents INTEGER NOT NULL CHECK (value_cents >= 0),
+  refund_cents INTEGER NOT NULL DEFAULT 0 CHECK (refund_cents >= 0),
+  refund_method TEXT CHECK (refund_method IS NULL OR refund_method IN ('Cash', 'Card', 'M-Pesa', 'Bank Transfer')),
+  refund_reference TEXT NOT NULL DEFAULT '',
+  user_id INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_returns_sale ON returns(sale_id);
+
+CREATE TABLE IF NOT EXISTS return_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  return_id INTEGER NOT NULL REFERENCES returns(id) ON DELETE CASCADE,
+  sale_item_id INTEGER NOT NULL REFERENCES sale_items(id),
+  quantity INTEGER NOT NULL CHECK (quantity > 0),
+  value_cents INTEGER NOT NULL CHECK (value_cents >= 0),
+  restocked INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_return_items_sale_item ON return_items(sale_item_id);
+
 CREATE TABLE IF NOT EXISTS stock_movements (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   product_id INTEGER NOT NULL REFERENCES products(id),
   change INTEGER NOT NULL,
-  reason TEXT NOT NULL CHECK (reason IN ('initial', 'sale', 'restock', 'adjustment', 'sale_cancelled')),
+  reason TEXT NOT NULL CHECK (reason IN ('initial', 'sale', 'restock', 'adjustment', 'sale_cancelled', 'return')),
   reference TEXT NOT NULL DEFAULT '',
   user_id INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -161,8 +185,58 @@ export function openDb(file: string): DB {
   return db;
 }
 
+/**
+ * One place that defines what a sale is worth and what's still owed, after payments, returns and refunds.
+ * Every balance in the app reads from here so the numbers can't drift apart.
+ */
+const SALE_BALANCES_VIEW = `
+DROP VIEW IF EXISTS sale_balances;
+CREATE VIEW sale_balances AS
+SELECT
+  x.sale_id,
+  x.paid_cents,
+  x.refunded_cents,
+  x.returned_cents,
+  x.total_cents - x.returned_cents AS net_total_cents,
+  x.paid_cents - x.refunded_cents AS net_paid_cents,
+  MAX(0, (x.total_cents - x.returned_cents) - (x.paid_cents - x.refunded_cents)) AS balance_cents
+FROM (
+  SELECT s.id AS sale_id, s.total_cents,
+    COALESCE((SELECT SUM(amount_cents) FROM payments WHERE sale_id = s.id), 0) AS paid_cents,
+    COALESCE((SELECT SUM(refund_cents) FROM returns WHERE sale_id = s.id), 0) AS refunded_cents,
+    COALESCE((SELECT SUM(value_cents) FROM returns WHERE sale_id = s.id), 0) AS returned_cents
+  FROM sales s
+) x;
+`;
+
 /** Additive migrations for databases created by earlier versions. */
 function migrate(db: DB) {
+  // SQLite can't alter a CHECK constraint, so rebuild stock_movements to allow the 'return' reason.
+  const movementsSql = (db.prepare("SELECT sql FROM sqlite_master WHERE name = 'stock_movements'").get() as { sql: string }).sql;
+  if (!movementsSql.includes("'return'")) {
+    // SQLite's documented table-rebuild procedure: foreign keys off (only possible outside a transaction).
+    db.pragma("foreign_keys = OFF");
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE stock_movements_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          product_id INTEGER NOT NULL REFERENCES products(id),
+          change INTEGER NOT NULL,
+          reason TEXT NOT NULL CHECK (reason IN ('initial', 'sale', 'restock', 'adjustment', 'sale_cancelled', 'return')),
+          reference TEXT NOT NULL DEFAULT '',
+          user_id INTEGER REFERENCES users(id),
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO stock_movements_new (id, product_id, change, reason, reference, user_id, created_at)
+          SELECT id, product_id, change, reason, reference, user_id, created_at FROM stock_movements;
+        DROP TABLE stock_movements;
+        ALTER TABLE stock_movements_new RENAME TO stock_movements;
+        CREATE INDEX IF NOT EXISTS idx_movements_product ON stock_movements(product_id);
+      `);
+    })();
+    db.pragma("foreign_keys = ON");
+  }
+
   const productCols = (db.prepare("PRAGMA table_info(products)").all() as { name: string }[]).map((c) => c.name);
   if (!productCols.includes("supplier_id")) {
     db.exec("ALTER TABLE products ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)");
@@ -179,6 +253,7 @@ function migrate(db: DB) {
     WHERE s.status = 'paid' AND s.total_cents > 0
       AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.sale_id = s.id)
   `);
+  db.exec(SALE_BALANCES_VIEW);
 }
 
 export const toCents = (amount: number) => Math.round(amount * 100);

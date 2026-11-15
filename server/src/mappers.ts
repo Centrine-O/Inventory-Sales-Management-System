@@ -58,6 +58,9 @@ export interface SaleRow {
   tax_cents: number;
   total_cents: number;
   paid_cents: number;
+  returned_cents: number;
+  refunded_cents: number;
+  balance_cents: number;
   notes: string;
   item_count: number;
   created_at: string;
@@ -75,8 +78,13 @@ export const mapSale = (r: SaleRow) => ({
   discount: fromCents(r.discount_cents),
   tax: fromCents(r.tax_cents),
   total: fromCents(r.total_cents),
+  /** Paid by the customer, net of any refunds. */
   amountPaid: fromCents(r.paid_cents),
-  balance: r.status === "cancelled" ? 0 : fromCents(Math.max(0, r.total_cents - r.paid_cents)),
+  returnedValue: fromCents(r.returned_cents),
+  refunded: fromCents(r.refunded_cents),
+  /** What the sale is worth after returns. */
+  netTotal: fromCents(r.total_cents - r.returned_cents),
+  balance: r.status === "cancelled" ? 0 : fromCents(r.balance_cents),
   notes: r.notes,
   itemCount: r.item_count,
   createdAt: iso(r.created_at),
@@ -85,8 +93,9 @@ export const mapSale = (r: SaleRow) => ({
 export const SALE_SELECT = `
   SELECT s.*, c.name AS customer_name, u.name AS cashier_name,
     (SELECT COALESCE(SUM(quantity), 0) FROM sale_items WHERE sale_id = s.id) AS item_count,
-    (SELECT COALESCE(SUM(amount_cents), 0) FROM payments WHERE sale_id = s.id) AS paid_cents
+    b.net_paid_cents AS paid_cents, b.returned_cents, b.refunded_cents, b.balance_cents
   FROM sales s
+  JOIN sale_balances b ON b.sale_id = s.id
   LEFT JOIN customers c ON c.id = s.customer_id
   LEFT JOIN users u ON u.id = s.user_id
 `;

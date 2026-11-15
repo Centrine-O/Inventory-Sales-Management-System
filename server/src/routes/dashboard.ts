@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { fromCents, type DB } from "../db.js";
 import { addDays, daysBetween, ymd } from "../dates.js";
+import { returnsByDay, returnsInRange } from "./reports.js";
 import { SALE_SELECT, mapProduct, mapSale, type ProductRow, type SaleRow } from "../mappers.js";
 
 const LOCAL_DATE = "date(s.created_at, 'localtime')";
@@ -14,13 +15,15 @@ export function dashboardRouter(db: DB) {
     const lastMonthStart = ymd(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1));
     const lastMonthSameDay = addDays(lastMonthStart, Number(today.slice(8)) - 1);
 
-    const revenue = (from: string, to: string) =>
-      db
+    const revenue = (from: string, to: string) => {
+      const r = db
         .prepare(
           `SELECT COALESCE(SUM(total_cents), 0) AS cents, COUNT(*) AS orders FROM sales s
            WHERE s.status != 'cancelled' AND ${LOCAL_DATE} BETWEEN ? AND ?`,
         )
         .get(from, to) as { cents: number; orders: number };
+      return { orders: r.orders, cents: r.cents - returnsInRange(db, from, to).value };
+    };
 
     const thisMonth = revenue(monthStart, today);
     // Compare month-to-date against the same span of last month, not the full month.
@@ -29,9 +32,8 @@ export function dashboardRouter(db: DB) {
 
     const pending = db
       .prepare(
-        `SELECT COUNT(*) AS n,
-           COALESCE(SUM(total_cents - (SELECT COALESCE(SUM(amount_cents), 0) FROM payments WHERE sale_id = s.id)), 0) AS cents
-         FROM sales s WHERE status = 'pending'`,
+        `SELECT COUNT(*) AS n, COALESCE(SUM(b.balance_cents), 0) AS cents
+         FROM sales s JOIN sale_balances b ON b.sale_id = s.id WHERE s.status = 'pending'`,
       )
       .get() as { n: number; cents: number };
 
@@ -60,6 +62,7 @@ export function dashboardRouter(db: DB) {
       )
       .all(weekStart, today) as { day: string; cents: number; orders: number }[];
     const byDay = new Map(daily.map((d) => [d.day, d]));
+    const returnedByDay = returnsByDay(db, weekStart, today);
 
     const recentSales = (db.prepare(`${SALE_SELECT} ORDER BY s.id DESC LIMIT 6`).all() as SaleRow[]).map(mapSale);
     const lowStock = (
@@ -88,7 +91,7 @@ export function dashboardRouter(db: DB) {
       newCustomersThisMonth: customers.new_this_month ?? 0,
       last7Days: daysBetween(weekStart, today).map((day) => ({
         date: day,
-        revenue: fromCents(byDay.get(day)?.cents ?? 0),
+        revenue: fromCents((byDay.get(day)?.cents ?? 0) - (returnedByDay.get(day) ?? 0)),
         orders: byDay.get(day)?.orders ?? 0,
       })),
       recentSales,

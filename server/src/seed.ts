@@ -129,6 +129,7 @@ const mpesaCode = () => "Q" + Array.from({ length: 9 }, () => "ABCDEFGHJKLMNPQRS
 
 const methods = ["Cash", "M-Pesa", "M-Pesa", "M-Pesa", "Card", "Bank Transfer"];
 let invoice = 0;
+let returnCount = 0;
 
 db.transaction(() => {
   for (let day = 60; day >= 0; day--) {
@@ -206,6 +207,43 @@ db.transaction(() => {
       }
     }
   }
+  // A handful of customer returns on older paid sales.
+  const candidates = db
+    .prepare(
+      `SELECT s.id, s.invoice_no, s.subtotal_cents, s.total_cents, s.created_at, i.id AS item_id, i.product_id, i.unit_price_cents
+       FROM sales s JOIN sale_items i ON i.sale_id = s.id
+       WHERE s.status = 'paid' AND s.created_at < datetime('now', '-5 days')
+       GROUP BY s.id ORDER BY s.id`,
+    )
+    .all() as { id: number; invoice_no: string; subtotal_cents: number; total_cents: number; created_at: string; item_id: number; product_id: number; unit_price_cents: number }[];
+  const reasons = ["Wrong size", "Faulty on arrival", "Customer changed mind", "Duplicate purchase", "Damaged packaging"];
+
+  for (const c of candidates.filter((_, i) => i % 23 === 7).slice(0, 6)) {
+    const no = `RET-${String(++returnCount).padStart(5, "0")}`;
+    const value = Math.round((c.unit_price_cents * c.total_cents) / c.subtotal_cents);
+    const damaged = returnCount === 2;
+    const when = sqlDate(new Date(new Date(c.created_at.replace(" ", "T") + "Z").getTime() + 3 * 86_400_000));
+    const retId = Number(
+      db
+        .prepare(
+          `INSERT INTO returns (return_no, sale_id, reason, value_cents, refund_cents, refund_method, refund_reference, user_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(no, c.id, damaged ? "Faulty on arrival" : pick(reasons), value, value, "M-Pesa", mpesaCode(), adminId, when).lastInsertRowid,
+    );
+    db.prepare("INSERT INTO return_items (return_id, sale_item_id, quantity, value_cents, restocked) VALUES (?, ?, 1, ?, ?)").run(
+      retId,
+      c.item_id,
+      value,
+      damaged ? 0 : 1,
+    );
+    if (!damaged) {
+      const p = catalog.find((x) => x.id === c.product_id)!;
+      p.stock += 1;
+      addMovement.run(p.id, 1, "return", `${no} · ${c.invoice_no}`, adminId, when);
+    }
+  }
+
   // Leave a few items low or out of stock so alerts have something to show.
   const drain = (sku: string, left: number) => {
     const p = catalog.find((c) => c.sku === sku)!;
@@ -253,6 +291,7 @@ db.transaction(() => {
 
 console.log(
   `Seeded ${catalog.length} products, ${Object.keys(supplierByCategory).length} suppliers, ${poCount} purchase orders, ` +
+    `${returnCount} returns, ` +
     `${customerIds.length} customers, ${invoice} sales into ${dbFile}`,
 );
 console.log("Sign in with admin@stockflow.local / admin1234 or cashier@stockflow.local / cashier1234");

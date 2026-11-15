@@ -6,15 +6,69 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, Download, ShoppingCart, Wallet, Clock, Receipt, Loader2 } from "lucide-react";
+import { Plus, Search, Download, ShoppingCart, Wallet, Clock, Receipt, Loader2, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { MetricCard, PageHeader, SaleStatusBadge, TableLoading, TableMessage } from "@/components/common";
 import { NewSaleDialog } from "@/components/sales/NewSaleDialog";
 import { SaleDetailDialog } from "@/components/sales/SaleDetailDialog";
-import { useSales, useSettings } from "@/hooks/api";
+import { useReturns, useSales, useSettings } from "@/hooks/api";
 import { Badge } from "@/components/ui/badge";
 import { api, errorMessage, qs } from "@/lib/api";
 import { formatDateTime, ksh, kshCompact } from "@/lib/format";
+
+function ReturnsCard({ from, to, onOpenSale }: { from: string; to: string; onOpenSale: (id: number) => void }) {
+  const { data: returns = [], isLoading } = useReturns({ from, to });
+  if (isLoading || returns.length === 0) return null;
+  const total = returns.reduce((s, r) => s + r.value, 0);
+  return (
+    <Card className="shadow-medium">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <CardTitle className="flex items-center gap-2">
+          <Undo2 className="h-5 w-5" />
+          Returns
+        </CardTitle>
+        <span className="text-sm text-muted-foreground">
+          {returns.length} return{returns.length === 1 ? "" : "s"} · {ksh(total)}
+        </span>
+      </CardHeader>
+      <CardContent className="overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Return</TableHead>
+              <TableHead>Invoice</TableHead>
+              <TableHead>Customer</TableHead>
+              <TableHead>Date</TableHead>
+              <TableHead>Reason</TableHead>
+              <TableHead className="text-right">Items</TableHead>
+              <TableHead className="text-right">Value</TableHead>
+              <TableHead className="text-right">Refunded</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {returns.map((r) => (
+              <TableRow key={r.id} className="cursor-pointer" onClick={() => onOpenSale(r.saleId)}>
+                <TableCell className="font-mono font-medium">{r.returnNo}</TableCell>
+                <TableCell className="font-mono">{r.invoiceNo}</TableCell>
+                <TableCell>{r.customerName}</TableCell>
+                <TableCell className="whitespace-nowrap">{formatDateTime(r.createdAt)}</TableCell>
+                <TableCell className="max-w-[220px] truncate">{r.reason}</TableCell>
+                <TableCell className="whitespace-nowrap text-right">
+                  {r.units}
+                  {r.damagedUnits > 0 && <span className="text-xs text-destructive"> ({r.damagedUnits} written off)</span>}
+                </TableCell>
+                <TableCell className="whitespace-nowrap text-right">{ksh(r.value)}</TableCell>
+                <TableCell className="whitespace-nowrap text-right">
+                  {r.refund > 0 ? `${ksh(r.refund)} · ${r.refundMethod}` : <span className="text-muted-foreground">Off balance</span>}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
 
 const Sales = () => {
   const [params, setParams] = useSearchParams();
@@ -34,7 +88,7 @@ const Sales = () => {
   const reviewThreshold = settings?.largeTransactionReview ? settings.largeTransactionThreshold : null;
 
   const active = sales.filter((s) => s.status !== "cancelled");
-  const revenue = active.reduce((s, x) => s + x.total, 0);
+  const revenue = active.reduce((s, x) => s + x.netTotal, 0);
   const pending = sales.filter((s) => s.status === "pending");
 
   const exportCsv = async () => {
@@ -146,6 +200,7 @@ const Sales = () => {
                       )}
                       {ksh(s.total)}
                       {s.balance > 0 && <p className="text-xs font-normal text-warning">{ksh(s.balance)} owed</p>}
+                      {s.returnedValue > 0 && <p className="text-xs font-normal text-destructive">−{ksh(s.returnedValue)} returned</p>}
                     </TableCell>
                     <TableCell>{s.paymentMethod}</TableCell>
                     <TableCell>
@@ -157,6 +212,8 @@ const Sales = () => {
             </Table>
           </CardContent>
         </Card>
+
+        <ReturnsCard from={from} to={to} onOpenSale={(id) => setViewing(id)} />
       </div>
 
       <NewSaleDialog open={newOpen} onOpenChange={setNewOpen} onCreated={(sale) => setViewing(sale.id)} />

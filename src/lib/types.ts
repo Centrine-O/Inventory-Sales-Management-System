@@ -34,7 +34,7 @@ export interface Product {
 export interface StockMovement {
   id: number;
   change: number;
-  reason: "initial" | "sale" | "restock" | "adjustment" | "sale_cancelled";
+  reason: "initial" | "sale" | "restock" | "adjustment" | "sale_cancelled" | "return";
   reference: string;
   userName: string;
   createdAt: string;
@@ -76,6 +76,9 @@ export interface Sale {
   tax: number;
   total: number;
   amountPaid: number;
+  returnedValue: number;
+  refunded: number;
+  netTotal: number;
   balance: number;
   notes: string;
   itemCount: number;
@@ -90,6 +93,36 @@ export interface SaleItem {
   quantity: number;
   unitPrice: number;
   lineTotal: number;
+  returnedQuantity: number;
+}
+
+export interface SaleReturn {
+  id: number;
+  returnNo: string;
+  reason: string;
+  value: number;
+  refund: number;
+  refundMethod: PaymentMethod | null;
+  refundReference: string;
+  processedBy: string;
+  createdAt: string;
+  items: { productName: string; quantity: number; restocked: boolean; value: number }[];
+}
+
+export interface ReturnRecord {
+  id: number;
+  returnNo: string;
+  saleId: number;
+  invoiceNo: string;
+  customerName: string;
+  reason: string;
+  value: number;
+  refund: number;
+  refundMethod: PaymentMethod | null;
+  units: number;
+  damagedUnits: number;
+  processedBy: string;
+  createdAt: string;
 }
 
 export interface Payment {
@@ -105,6 +138,7 @@ export interface SaleDetail extends Sale {
   customer: { name: string; email: string; phone: string } | null;
   items: SaleItem[];
   payments: Payment[];
+  returns: SaleReturn[];
 }
 
 export interface CustomerDetail extends Customer {
@@ -153,6 +187,10 @@ export interface Report {
   from: string;
   to: string;
   summary: {
+    grossSales: number;
+    returns: number;
+    returnsCount: number;
+    refunds: number;
     revenue: number;
     revenueChangePct: number | null;
     orders: number;

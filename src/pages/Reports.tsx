@@ -206,7 +206,18 @@ const Reports = () => {
             value={s && kshCompact(s.revenue)}
             icon={<TrendingUp className="h-5 w-5" />}
             loading={loading}
-            hint={s && <ChangeHint value={s.revenueChangePct} />}
+            hint={
+              s && (
+                <div className="space-y-0.5">
+                  <ChangeHint value={s.revenueChangePct} />
+                  {s.returns > 0 && (
+                    <p>
+                      Net of {ksh(s.returns)} in returns ({s.returnsCount})
+                    </p>
+                  )}
+                </div>
+              )
+            }
           />
           <MetricCard
             label="Orders"

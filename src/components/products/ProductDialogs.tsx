@@ -290,6 +290,7 @@ const MOVEMENT_LABEL: Record<StockMovement["reason"], string> = {
   restock: "Restock",
   adjustment: "Adjustment",
   sale_cancelled: "Sale cancelled",
+  return: "Customer return",
 };
 
 export function ProductDetailDialog({ productId, onOpenChange }: { productId: number | null; onOpenChange: (o: boolean) => void }) {

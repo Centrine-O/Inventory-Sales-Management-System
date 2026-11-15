@@ -37,13 +37,13 @@ const mapCustomer = (c: CustomerRow) => ({
 const SELECT = `
   SELECT c.*,
     COUNT(s.id) AS total_orders,
-    COALESCE(SUM(s.total_cents), 0) AS total_spent_cents,
+    COALESCE(SUM(b.net_total_cents), 0) AS total_spent_cents,
     MAX(s.created_at) AS last_purchase_at,
-    COALESCE(SUM(CASE WHEN s.status = 'pending'
-      THEN s.total_cents - (SELECT COALESCE(SUM(amount_cents), 0) FROM payments WHERE sale_id = s.id) END), 0) AS balance_cents,
+    COALESCE(SUM(CASE WHEN s.status = 'pending' THEN b.balance_cents END), 0) AS balance_cents,
     MIN(CASE WHEN s.status = 'pending' THEN s.created_at END) AS oldest_unpaid_at
   FROM customers c
   LEFT JOIN sales s ON s.customer_id = c.id AND s.status != 'cancelled'
+  LEFT JOIN sale_balances b ON b.sale_id = s.id
 `;
 
 const bodySchema = z.object({

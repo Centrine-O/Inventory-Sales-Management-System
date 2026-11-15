@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2, Printer, Wallet, XCircle } from "lucide-react";
+import { Loader2, Printer, Undo2, Wallet, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ConfirmDialog, SaleStatusBadge } from "@/components/common";
+import { ReturnDialog } from "./ReturnDialog";
 import { useRecordPayment, useSale, useSettings, useUpdateSaleStatus } from "@/hooks/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatDateTime, kshExact } from "@/lib/format";
@@ -98,6 +99,8 @@ export function SaleDetailDialog({ saleId, onOpenChange }: { saleId: number | nu
   const update = useUpdateSaleStatus();
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
+  const [returnOpen, setReturnOpen] = useState(false);
+  const canReturn = sale && sale.status !== "cancelled" && sale.items.some((i) => i.returnedQuantity < i.quantity);
 
   return (
     <>
@@ -157,6 +160,9 @@ export function SaleDetailDialog({ saleId, onOpenChange }: { saleId: number | nu
                       <TableCell>
                         {i.productName}
                         <span className="ml-2 font-mono text-xs text-muted-foreground">{i.sku}</span>
+                        {i.returnedQuantity > 0 && (
+                          <span className="ml-2 text-xs text-destructive">({i.returnedQuantity} returned)</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right">{i.quantity}</TableCell>
                       <TableCell className="whitespace-nowrap text-right">{kshExact(i.unitPrice)}</TableCell>
@@ -186,7 +192,19 @@ export function SaleDetailDialog({ saleId, onOpenChange }: { saleId: number | nu
                   <span>Total</span>
                   <span>{kshExact(sale.total)}</span>
                 </div>
-                {sale.status !== "cancelled" && sale.amountPaid < sale.total && (
+                {sale.returnedValue > 0 && (
+                  <>
+                    <div className="flex justify-between text-destructive">
+                      <span>Returned</span>
+                      <span>−{kshExact(sale.returnedValue)}</span>
+                    </div>
+                    <div className="flex justify-between font-semibold">
+                      <span>Net total</span>
+                      <span>{kshExact(sale.netTotal)}</span>
+                    </div>
+                  </>
+                )}
+                {sale.status !== "cancelled" && sale.balance > 0 && (
                   <>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Paid</span>
@@ -199,6 +217,33 @@ export function SaleDetailDialog({ saleId, onOpenChange }: { saleId: number | nu
                   </>
                 )}
               </div>
+
+              {sale.returns.length > 0 && (
+                <div>
+                  <p className="mb-2 font-medium">Returns</p>
+                  <div className="divide-y rounded-xl border">
+                    {sale.returns.map((r) => (
+                      <div key={r.id} className="space-y-1 px-3 py-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <p>
+                            <span className="font-mono">{r.returnNo}</span>
+                            <span className="ml-2 text-muted-foreground">{r.reason}</span>
+                          </p>
+                          <span className="whitespace-nowrap font-medium text-destructive">−{kshExact(r.value)}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {r.items.map((it) => `${it.quantity} × ${it.productName}${it.restocked ? "" : " (written off)"}`).join(", ")}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDateTime(r.createdAt)}
+                          {r.processedBy && ` · ${r.processedBy}`}
+                          {r.refund > 0 && ` · refunded ${kshExact(r.refund)} by ${r.refundMethod}${r.refundReference ? ` (${r.refundReference})` : ""}`}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {sale.payments.length > 0 && (
                 <div>
@@ -233,11 +278,17 @@ export function SaleDetailDialog({ saleId, onOpenChange }: { saleId: number | nu
           )}
 
           {sale && (
-            <DialogFooter className="gap-2 print:hidden">
-              {isAdmin && sale.status !== "cancelled" && (
+            <DialogFooter className="flex-wrap gap-2 print:hidden">
+              {isAdmin && sale.status !== "cancelled" && sale.returns.length === 0 && (
                 <Button variant="outline" className="text-destructive" onClick={() => setConfirmCancel(true)}>
                   <XCircle className="mr-2 h-4 w-4" />
                   Cancel sale
+                </Button>
+              )}
+              {isAdmin && canReturn && (
+                <Button variant="outline" onClick={() => setReturnOpen(true)}>
+                  <Undo2 className="mr-2 h-4 w-4" />
+                  Return items
                 </Button>
               )}
               {sale.status === "pending" && (
@@ -256,6 +307,7 @@ export function SaleDetailDialog({ saleId, onOpenChange }: { saleId: number | nu
       </Dialog>
 
       {sale && <RecordPaymentDialog sale={sale} open={payOpen} onOpenChange={setPayOpen} />}
+      {sale && <ReturnDialog sale={sale} open={returnOpen} onOpenChange={setReturnOpen} />}
       <ConfirmDialog
         open={confirmCancel}
         onOpenChange={setConfirmCancel}

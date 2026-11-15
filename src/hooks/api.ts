@@ -13,6 +13,7 @@ import type {
   PurchaseOrderDetail,
   Receivables,
   ReorderGroup,
+  ReturnRecord,
   Report,
   Sale,
   SaleDetail,
@@ -214,6 +215,39 @@ export function useRecordPayment() {
     onError,
   });
 }
+
+export interface ReturnInput {
+  saleId: number;
+  reason: string;
+  refundMethod?: PaymentMethod;
+  refundReference: string;
+  items: { saleItemId: number; quantity: number; restock: boolean }[];
+}
+
+export function useCreateReturn() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ saleId, ...body }: ReturnInput) =>
+      api.post<SaleDetail & { lastReturn: { returnNo: string; refund: number } }>(`/sales/${saleId}/returns`, body),
+    onSuccess: (s) => {
+      invalidate([...INVENTORY_KEYS, ["returns"]]);
+      toast.success(
+        s.lastReturn.refund > 0
+          ? `${s.lastReturn.returnNo} processed · refund KSh ${s.lastReturn.refund.toLocaleString()}`
+          : `${s.lastReturn.returnNo} processed`,
+      );
+    },
+    onError,
+  });
+}
+
+export const useReturns = (filters: { search?: string; from?: string; to?: string } = {}, enabled = true) =>
+  useQuery({
+    queryKey: ["returns", filters],
+    queryFn: () => api.get<ReturnRecord[]>(`/returns${qs(filters)}`),
+    placeholderData: keepPreviousData,
+    enabled,
+  });
 
 export const useReceivables = (enabled = true) =>
   useQuery({ queryKey: ["reports", "receivables"], queryFn: () => api.get<Receivables>("/reports/receivables"), enabled });
