@@ -11,7 +11,8 @@ import { toast } from "sonner";
 import { MetricCard, PageHeader, SaleStatusBadge, TableLoading, TableMessage } from "@/components/common";
 import { NewSaleDialog } from "@/components/sales/NewSaleDialog";
 import { SaleDetailDialog } from "@/components/sales/SaleDetailDialog";
-import { useSales } from "@/hooks/api";
+import { useSales, useSettings } from "@/hooks/api";
+import { Badge } from "@/components/ui/badge";
 import { api, errorMessage, qs } from "@/lib/api";
 import { formatDateTime, ksh, kshCompact } from "@/lib/format";
 
@@ -29,6 +30,8 @@ const Sales = () => {
 
   const filters = { search: searchInput.trim() || undefined, status: status === "all" ? undefined : status, from, to };
   const { data: sales = [], isLoading } = useSales(filters);
+  const { data: settings } = useSettings();
+  const reviewThreshold = settings?.largeTransactionReview ? settings.largeTransactionThreshold : null;
 
   const active = sales.filter((s) => s.status !== "cancelled");
   const revenue = active.reduce((s, x) => s + x.total, 0);
@@ -135,7 +138,14 @@ const Sales = () => {
                     <TableCell>{s.customerName}</TableCell>
                     <TableCell className="whitespace-nowrap">{formatDateTime(s.createdAt)}</TableCell>
                     <TableCell className="text-right">{s.itemCount}</TableCell>
-                    <TableCell className="whitespace-nowrap text-right font-semibold">{ksh(s.total)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right font-semibold">
+                      {reviewThreshold !== null && s.status !== "cancelled" && s.total >= reviewThreshold && (
+                        <Badge variant="outline" className="mr-2 border-warning text-warning">
+                          Review
+                        </Badge>
+                      )}
+                      {ksh(s.total)}
+                    </TableCell>
                     <TableCell>{s.paymentMethod}</TableCell>
                     <TableCell>
                       <SaleStatusBadge status={s.status} />

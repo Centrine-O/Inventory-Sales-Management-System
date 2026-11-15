@@ -15,7 +15,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
-import { useDashboard, useSearch } from "@/hooks/api";
+import { useDashboard, useSearch, useSettings } from "@/hooks/api";
 import { initials } from "@/lib/format";
 import { mobileNavigation } from "./Sidebar";
 
@@ -98,6 +98,8 @@ function GlobalSearch() {
 
 function Alerts() {
   const { data } = useDashboard();
+  const { data: settings } = useSettings();
+  if (settings && !settings.lowStockAlerts) return null;
   const count = (data?.lowStockCount ?? 0) + (data?.outOfStockCount ?? 0);
   return (
     <DropdownMenu>
