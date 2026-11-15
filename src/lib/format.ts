@@ -36,3 +36,11 @@ export const STOCK_STATUS_LABEL = {
 } as const;
 
 export const SALE_STATUS_LABEL = { paid: "Paid", pending: "Pending", cancelled: "Cancelled" } as const;
+
+export const PO_STATUS_LABEL = {
+  draft: "Draft",
+  ordered: "Ordered",
+  partially_received: "Partly received",
+  received: "Received",
+  cancelled: "Cancelled",
+} as const;

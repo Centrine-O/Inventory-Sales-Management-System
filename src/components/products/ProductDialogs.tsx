@@ -12,9 +12,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FieldError, StockBadge } from "@/components/common";
-import { useAdjustStock, useCategories, useProduct, useSaveProduct } from "@/hooks/api";
+import { useAdjustStock, useCategories, useProduct, useSaveProduct, useSuppliers } from "@/hooks/api";
 import { formatDateTime, ksh } from "@/lib/format";
 import type { Product, StockMovement } from "@/lib/types";
+
+const NO_SUPPLIER = "none";
 
 const productSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
@@ -25,6 +27,7 @@ const productSchema = z.object({
   cost: z.coerce.number({ invalid_type_error: "Enter a cost" }).min(0, "Cost cannot be negative"),
   stock: z.coerce.number().int("Whole numbers only").min(0, "Stock cannot be negative"),
   reorderLevel: z.coerce.number().int("Whole numbers only").min(0),
+  supplier: z.string(),
 });
 type ProductForm = z.infer<typeof productSchema>;
 
@@ -39,16 +42,19 @@ export function ProductFormDialog({
 }) {
   const save = useSaveProduct();
   const { data: categories = [] } = useCategories();
+  // The supplier Select must not mount before its options exist: Radix's hidden native <select>
+  // would otherwise fall back to "None" and silently overwrite the product's saved supplier.
+  const { data: suppliers = [], isSuccess: suppliersReady } = useSuppliers(open);
   const form = useForm<ProductForm>({ resolver: zodResolver(productSchema) });
-  const { register, handleSubmit, reset, watch, formState } = form;
+  const { register, handleSubmit, reset, watch, setValue, formState } = form;
   const errors = formState.errors;
 
   useEffect(() => {
     if (open) {
       reset(
         product
-          ? { ...product }
-          : { name: "", sku: "", category: "", description: "", price: 0, cost: 0, stock: 0, reorderLevel: 5 },
+          ? { ...product, supplier: product.supplierId ? String(product.supplierId) : NO_SUPPLIER }
+          : { name: "", sku: "", category: "", description: "", price: 0, cost: 0, stock: 0, reorderLevel: 5, supplier: NO_SUPPLIER },
       );
     }
   }, [open, product, reset]);
@@ -58,7 +64,8 @@ export function ProductFormDialog({
   const margin = price > 0 ? ((price - cost) / price) * 100 : null;
 
   const onSubmit = (values: ProductForm) => {
-    const { stock, ...rest } = values as Required<ProductForm>;
+    const { stock, supplier, ...fields } = values as Required<ProductForm>;
+    const rest = { ...fields, supplierId: supplier === NO_SUPPLIER ? null : Number(supplier) };
     save.mutate(product ? { id: product.id, ...rest } : { ...rest, stock }, { onSuccess: () => onOpenChange(false) });
   };
 
@@ -124,6 +131,29 @@ export function ProductFormDialog({
               <Input id="p-reorder" type="number" min="0" step="1" {...register("reorderLevel")} />
               <FieldError message={errors.reorderLevel?.message} />
             </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Preferred supplier</Label>
+            {!suppliersReady ? (
+              <Skeleton className="h-10 w-full" />
+            ) : (
+              <Select value={watch("supplier")} onValueChange={(v) => setValue("supplier", v)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_SUPPLIER}>None</SelectItem>
+                  {suppliers
+                    .filter((s) => s.active || String(s.id) === watch("supplier"))
+                    .map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            )}
+            <p className="text-xs text-muted-foreground">Used to group reorder suggestions by supplier.</p>
           </div>
           <div className="space-y-2">
             <Label htmlFor="p-desc">Description (optional)</Label>

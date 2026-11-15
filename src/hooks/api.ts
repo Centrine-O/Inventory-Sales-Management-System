@@ -9,16 +9,34 @@ import type {
   PaymentMethod,
   Product,
   ProductDetail,
+  PurchaseOrder,
+  PurchaseOrderDetail,
+  ReorderGroup,
   Report,
   Sale,
   SaleDetail,
   SearchResults,
   Settings,
   StockStatus,
+  Supplier,
+  SupplierDetail,
 } from "@/lib/types";
 
 /** Everything that changes when stock or sales change. */
-const INVENTORY_KEYS = [["products"], ["product"], ["sales"], ["sale"], ["customers"], ["customer"], ["dashboard"], ["reports"]];
+const INVENTORY_KEYS = [
+  ["products"],
+  ["product"],
+  ["sales"],
+  ["sale"],
+  ["customers"],
+  ["customer"],
+  ["dashboard"],
+  ["reports"],
+  ["purchase-orders"],
+  ["purchase-order"],
+  ["suppliers"],
+  ["supplier"],
+];
 
 function useInvalidate() {
   const qc = useQueryClient();
@@ -55,6 +73,7 @@ export interface ProductInput {
   cost: number;
   stock?: number;
   reorderLevel: number;
+  supplierId: number | null;
 }
 
 export function useSaveProduct() {
@@ -249,6 +268,130 @@ export function useChangePassword() {
   return useMutation({
     mutationFn: (body: { currentPassword: string; newPassword: string }) => api.post("/auth/password", body),
     onSuccess: () => toast.success("Password changed"),
+    onError,
+  });
+}
+
+// ---------- Suppliers ----------
+
+export const useSuppliers = (enabled = true) =>
+  useQuery({ queryKey: ["suppliers"], queryFn: () => api.get<Supplier[]>("/suppliers"), enabled });
+
+export const useSupplier = (id: number | null) =>
+  useQuery({
+    queryKey: ["supplier", id],
+    queryFn: () => api.get<SupplierDetail>(`/suppliers/${id}`),
+    enabled: id !== null,
+  });
+
+export interface SupplierInput {
+  name: string;
+  contactName: string;
+  email: string;
+  phone: string;
+  address: string;
+  notes: string;
+  active: boolean;
+}
+
+export function useSaveSupplier() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, ...body }: SupplierInput & { id?: number }) =>
+      id ? api.patch<Supplier>(`/suppliers/${id}`, body) : api.post<Supplier>("/suppliers", body),
+    onSuccess: (s, vars) => {
+      invalidate([["suppliers"], ["supplier"]]);
+      toast.success(vars.id ? `${s.name} updated` : `${s.name} added`);
+    },
+    onError,
+  });
+}
+
+export function useDeleteSupplier() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (s: Supplier) => api.delete(`/suppliers/${s.id}`),
+    onSuccess: (_r, s) => {
+      invalidate([["suppliers"], ["products"]]);
+      toast.success(`${s.name} deleted`);
+    },
+    onError,
+  });
+}
+
+// ---------- Purchase orders ----------
+
+export const usePurchaseOrders = (filters: { status?: string; supplierId?: number; search?: string } = {}) =>
+  useQuery({
+    queryKey: ["purchase-orders", filters],
+    queryFn: () => api.get<PurchaseOrder[]>(`/purchase-orders${qs(filters)}`),
+    placeholderData: keepPreviousData,
+  });
+
+export const usePurchaseOrder = (id: number | null) =>
+  useQuery({
+    queryKey: ["purchase-order", id],
+    queryFn: () => api.get<PurchaseOrderDetail>(`/purchase-orders/${id}`),
+    enabled: id !== null,
+  });
+
+export const useReorderSuggestions = () =>
+  useQuery({ queryKey: ["purchase-orders", "suggestions"], queryFn: () => api.get<ReorderGroup[]>("/purchase-orders/suggestions") });
+
+export interface PurchaseOrderInput {
+  supplierId: number;
+  expectedDate: string | null;
+  notes: string;
+  items: { productId: number; quantity: number; unitCost: number }[];
+}
+
+export function useSavePurchaseOrder() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<PurchaseOrderInput> & { id?: number }) =>
+      id ? api.patch<PurchaseOrderDetail>(`/purchase-orders/${id}`, body) : api.post<PurchaseOrderDetail>("/purchase-orders", body),
+    onSuccess: (po, vars) => {
+      invalidate([["purchase-orders"], ["purchase-order"], ["suppliers"], ["supplier"]]);
+      toast.success(vars.id ? `${po.poNumber} saved` : `${po.poNumber} created as a draft`);
+    },
+    onError,
+  });
+}
+
+export function usePurchaseOrderAction() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, action }: { id: number; action: "order" | "cancel" }) =>
+      api.post<PurchaseOrderDetail>(`/purchase-orders/${id}/${action}`),
+    onSuccess: (po, { action }) => {
+      invalidate([["purchase-orders"], ["purchase-order"], ["suppliers"], ["supplier"]]);
+      toast.success(action === "order" ? `${po.poNumber} placed with ${po.supplierName}` : `${po.poNumber} cancelled`);
+    },
+    onError,
+  });
+}
+
+export function useReceivePurchaseOrder() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: number; items: { itemId: number; quantity: number }[]; note: string }) =>
+      api.post<PurchaseOrderDetail>(`/purchase-orders/${id}/receive`, body),
+    onSuccess: (po) => {
+      invalidate();
+      toast.success(po.status === "received" ? `${po.poNumber} fully received` : `Goods received against ${po.poNumber}`);
+    },
+    onError,
+  });
+}
+
+export function useDeletePurchaseOrder() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (po: PurchaseOrder) => api.delete(`/purchase-orders/${po.id}`),
+    onSuccess: (_r, po) => {
+      invalidate([["purchase-orders"]]);
+      toast.success(`${po.poNumber} deleted`);
+    },
     onError,
   });
 }

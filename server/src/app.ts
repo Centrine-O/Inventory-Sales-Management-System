@@ -3,7 +3,7 @@ import cors from "cors";
 import fs from "node:fs";
 import path from "node:path";
 import type { DB } from "./db.js";
-import { errorHandler, HttpError, requireAuth } from "./http.js";
+import { errorHandler, HttpError, requireAuth, requireRole } from "./http.js";
 import { authRouter } from "./routes/auth.js";
 import { usersRouter } from "./routes/users.js";
 import { productsRouter } from "./routes/products.js";
@@ -12,6 +12,8 @@ import { salesRouter } from "./routes/sales.js";
 import { settingsRouter } from "./routes/settings.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { reportsRouter } from "./routes/reports.js";
+import { suppliersRouter } from "./routes/suppliers.js";
+import { purchaseOrdersRouter } from "./routes/purchaseOrders.js";
 
 function searchRouter(db: DB) {
   const r = Router();
@@ -62,6 +64,8 @@ export function createApp(db: DB, opts: { staticDir?: string } = {}) {
   api.use("/dashboard", dashboardRouter(db));
   api.use("/reports", reportsRouter(db));
   api.use("/search", searchRouter(db));
+  api.use("/suppliers", requireRole("admin"), suppliersRouter(db));
+  api.use("/purchase-orders", requireRole("admin"), purchaseOrdersRouter(db));
   app.use("/api", api);
 
   app.use("/api", () => {

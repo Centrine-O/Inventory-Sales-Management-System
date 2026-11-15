@@ -51,22 +51,47 @@ const daysAgo = (n: number, hour = 9) => {
   return d;
 };
 
+const addSupplier = db.prepare(
+  "INSERT INTO suppliers (name, contact_name, email, phone, address, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+);
+const supplierByCategory: Record<string, number> = {};
+for (const [category, name, contact, email, phone, address] of [
+  ["Electronics", "Westlands Tech Distributors", "Kevin Odhiambo", "orders@westlandstech.example", "+254 722 410 220", "Westlands, Nairobi"],
+  ["Furniture", "Mombasa Road Office Furniture", "Janet Mutua", "sales@mrfurniture.example", "+254 733 551 090", "Mombasa Road, Nairobi"],
+  ["Accessories", "Accessories Hub EA", "Ali Abdi", "ali@accessorieshub.example", "+254 711 302 455", "Eastleigh, Nairobi"],
+  ["Office Supplies", "Industrial Area Stationers", "Rose Wambui", "rose@iastationers.example", "+254 720 880 133", "Industrial Area, Nairobi"],
+]) {
+  supplierByCategory[category] = Number(addSupplier.run(name, contact, email, phone, address, sqlDate(daysAgo(80))).lastInsertRowid);
+}
+
 const addProduct = db.prepare(
-  `INSERT INTO products (name, sku, category, price_cents, cost_cents, stock, reorder_level, created_at, updated_at)
+  `INSERT INTO products (name, sku, category, price_cents, cost_cents, stock, reorder_level, supplier_id, created_at, updated_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+);
+const addPo = db.prepare(
+  `INSERT INTO purchase_orders (po_number, supplier_id, status, expected_date, notes, user_id, created_at, ordered_at, received_at)
    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 );
+const addPoItem = db.prepare(
+  "INSERT INTO purchase_order_items (po_id, product_id, quantity_ordered, quantity_received, unit_cost_cents) VALUES (?, ?, ?, ?, ?)",
+);
+let poCount = 0;
+const nextPo = () => `PO-${String(++poCount).padStart(5, "0")}`;
 const addMovement = db.prepare(
   "INSERT INTO stock_movements (product_id, change, reason, reference, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
 );
 
-interface P { id: number; name: string; sku: string; category: string; price: number; cost: number; stock: number }
+interface P { id: number; name: string; sku: string; category: string; price: number; cost: number; stock: number; reorder: number }
 const catalog: P[] = [];
 const opened = sqlDate(daysAgo(75));
 for (const [name, sku, category, price, cost, reorder] of products) {
   const stock = int(30, 90);
-  const id = Number(addProduct.run(name, sku, category, toCents(price), toCents(cost), stock, reorder, opened, opened).lastInsertRowid);
+  const id = Number(
+    addProduct.run(name, sku, category, toCents(price), toCents(cost), stock, reorder, supplierByCategory[category], opened, opened)
+      .lastInsertRowid,
+  );
   addMovement.run(id, stock, "initial", "Opening stock", adminId, opened);
-  catalog.push({ id, name, sku, category, price: toCents(price), cost: toCents(cost), stock });
+  catalog.push({ id, name, sku, category, price: toCents(price), cost: toCents(cost), stock, reorder });
 }
 
 const customerData: [string, string, string, string][] = [
@@ -134,13 +159,25 @@ db.transaction(() => {
         }
       }
     }
-    // Weekly supplier deliveries keep popular items available.
+    // Weekly supplier deliveries keep popular items available, recorded as received purchase orders.
     if (day % 7 === 0) {
+      const bySupplier = new Map<number, P[]>();
       for (const p of catalog) {
         if (p.stock < 15) {
+          const sid = supplierByCategory[p.category];
+          bySupplier.set(sid, [...(bySupplier.get(sid) ?? []), p]);
+        }
+      }
+      for (const [sid, items] of bySupplier) {
+        const ordered = sqlDate(daysAgo(day + 3, 10));
+        const received = sqlDate(daysAgo(day, 7));
+        const no = nextPo();
+        const poId = Number(addPo.run(no, sid, "received", null, "", adminId, ordered, ordered, received).lastInsertRowid);
+        for (const p of items) {
           const q = int(15, 40);
+          addPoItem.run(poId, p.id, q, q, p.cost);
           p.stock += q;
-          addMovement.run(p.id, q, "restock", "Supplier delivery", adminId, sqlDate(daysAgo(day, 7)));
+          addMovement.run(p.id, q, "restock", no, adminId, received);
         }
       }
     }
@@ -160,7 +197,38 @@ db.transaction(() => {
 
   const setStock = db.prepare("UPDATE products SET stock = ? WHERE id = ?");
   for (const p of catalog) setStock.run(p.stock, p.id);
+
+  // Open orders in different states so the purchasing screens have something to show.
+  const bySku = (sku: string) => catalog.find((c) => c.sku === sku)!;
+  const openPo = (sku: string[], status: "ordered" | "partially_received" | "draft", daysBack: number, notes: string) => {
+    const sid = supplierByCategory[bySku(sku[0]).category];
+    const created = sqlDate(daysAgo(daysBack, 11));
+    const expected = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 4);
+    const expectedStr = `${expected.getFullYear()}-${String(expected.getMonth() + 1).padStart(2, "0")}-${String(expected.getDate()).padStart(2, "0")}`;
+    const no = nextPo();
+    const poId = Number(
+      addPo.run(no, sid, status, status === "draft" ? null : expectedStr, notes, adminId, created, status === "draft" ? null : created, null)
+        .lastInsertRowid,
+    );
+    sku.forEach((code, i) => {
+      const p = bySku(code);
+      const qty = Math.max(p.reorder * 2, 10);
+      const got = status === "partially_received" && i === 0 ? Math.floor(qty / 2) : 0;
+      addPoItem.run(poId, p.id, qty, got, p.cost);
+      if (got > 0) {
+        p.stock += got;
+        setStock.run(p.stock, p.id);
+        addMovement.run(p.id, got, "restock", no, adminId, sqlDate(daysAgo(1, 9)));
+      }
+    });
+  };
+  openPo(["UCH-003", "WM-204"], "ordered", 2, "Deliver to back store");
+  openPo(["FC-310", "SD-004"], "partially_received", 5, "Desks back-ordered by supplier");
+  openPo(["ST-090"], "draft", 0, "");
 })();
 
-console.log(`Seeded ${catalog.length} products, ${customerIds.length} customers, ${invoice} sales into ${dbFile}`);
+console.log(
+  `Seeded ${catalog.length} products, ${Object.keys(supplierByCategory).length} suppliers, ${poCount} purchase orders, ` +
+    `${customerIds.length} customers, ${invoice} sales into ${dbFile}`,
+);
 console.log("Sign in with admin@stockflow.local / admin1234 or cashier@stockflow.local / cashier1234");

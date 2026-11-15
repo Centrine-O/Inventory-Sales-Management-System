@@ -26,6 +26,7 @@ Demo accounts (created by the seed):
 
 - **Products** — create/edit, SKU uniqueness, cost & margin, reorder levels with derived *in stock / low / out* status, stock adjustments (restock, count corrections) with a full movement history. Products with sales history are archived rather than deleted.
 - **Sales (POS)** — searchable cart, live stock checks, walk-in or named customer (add one inline), Cash / M-Pesa / Card / Bank Transfer, paid or pending (credit), discounts, VAT shown as included. Recording a sale deducts stock atomically; cancelling one (admin) restores it. Printable invoices, CSV export, date/status filters, optional large-transaction review flag.
+- **Suppliers & purchasing** (admin) — supplier directory with each product's preferred supplier; purchase orders that go draft → ordered → partly received → received (or cancelled); receiving goods raises stock, logs a restock movement against the PO, and updates unit cost as a weighted average. Reorder suggestions group low-stock items by supplier (net of quantities already on order) and turn into a draft PO in one click. Printable POs, overdue-delivery tracking.
 - **Customers** — contact details, active/inactive, lifetime orders and spend, purchase history.
 - **Dashboard** — month-to-date revenue vs the same span last month, today's sales, pending payments, 7-day revenue chart, recent sales, low-stock watchlist.
 - **Reports** (admin) — any date range: revenue, orders, average order, gross profit and margin (using cost captured at sale time), collected vs outstanding, daily trend, revenue by category and payment method, top products and customers, inventory value. CSV export.
@@ -40,6 +41,7 @@ Demo accounts (created by the seed):
 | View products, add/edit customers            | ✓ | ✓ |
 | Manage products & stock, delete customers    |   | ✓ |
 | Cancel sales, view reports, change settings  |   | ✓ |
+| Suppliers and purchase orders                |   | ✓ |
 | Manage staff accounts                        |   | ✓ |
 
 Permissions are enforced by the API; the UI simply hides what a role can't use.
@@ -95,7 +97,11 @@ GET    /sales[?search&status&from&to]       POST /sales     GET /sales/:id
 PATCH  /sales/:id/status {paid|cancelled}   GET  /sales/export.csv
 GET    /dashboard                  GET  /reports[?from&to] GET  /reports/export.csv
 GET    /settings                   PUT  /settings          GET  /search?q=
+GET/POST /suppliers                GET/PATCH/DELETE /suppliers/:id                      (admin)
+GET    /purchase-orders[?status=open|draft|...&supplierId&search]   POST /purchase-orders (admin)
+GET    /purchase-orders/suggestions                 GET/PATCH/DELETE /purchase-orders/:id
+POST   /purchase-orders/:id/order    POST /purchase-orders/:id/receive    POST /purchase-orders/:id/cancel
 GET/POST /users                    PATCH /users/:id        (admin)
 ```
 
-Money is stored as integer cents in SQLite and exposed as decimal shillings.
+Money is stored as integer cents in SQLite and exposed as decimal shillings. Schema changes are applied automatically on startup, so existing databases upgrade in place.

@@ -24,6 +24,7 @@ export interface Product {
   cost: number;
   stock: number;
   reorderLevel: number;
+  supplierId: number | null;
   status: StockStatus;
   archived: boolean;
   createdAt: string;
@@ -160,4 +161,77 @@ export interface SearchResults {
   products: { id: number; name: string; sku: string }[];
   customers: { id: number; name: string; email: string; phone: string }[];
   sales: { id: number; invoiceNo: string; customerName: string }[];
+}
+
+export interface Supplier {
+  id: number;
+  name: string;
+  contactName: string;
+  email: string;
+  phone: string;
+  address: string;
+  notes: string;
+  active: boolean;
+  productCount: number;
+  openOrders: number;
+  totalPurchased: number;
+  createdAt: string;
+}
+
+export type PurchaseOrderStatus = "draft" | "ordered" | "partially_received" | "received" | "cancelled";
+
+export interface PurchaseOrder {
+  id: number;
+  poNumber: string;
+  supplierId: number;
+  supplierName: string;
+  status: PurchaseOrderStatus;
+  expectedDate: string | null;
+  notes: string;
+  createdBy: string;
+  lineCount: number;
+  unitsOrdered: number;
+  unitsReceived: number;
+  total: number;
+  receivedValue: number;
+  createdAt: string;
+  orderedAt: string | null;
+  receivedAt: string | null;
+}
+
+export interface PurchaseOrderItem {
+  id: number;
+  productId: number;
+  productName: string;
+  sku: string;
+  currentStock: number;
+  quantityOrdered: number;
+  quantityReceived: number;
+  unitCost: number;
+  lineTotal: number;
+}
+
+export interface PurchaseOrderDetail extends PurchaseOrder {
+  supplier: { name: string; contactName: string; email: string; phone: string; address: string };
+  items: PurchaseOrderItem[];
+}
+
+export interface SupplierDetail extends Supplier {
+  products: Product[];
+  orders: PurchaseOrder[];
+}
+
+export interface ReorderGroup {
+  supplierId: number | null;
+  supplierName: string | null;
+  items: {
+    productId: number;
+    name: string;
+    sku: string;
+    stock: number;
+    reorderLevel: number;
+    onOrder: number;
+    suggestedQuantity: number;
+    unitCost: number;
+  }[];
 }

@@ -77,8 +77,8 @@ export function SaleDetailDialog({ saleId, onOpenChange }: { saleId: number | nu
                         <span className="ml-2 font-mono text-xs text-muted-foreground">{i.sku}</span>
                       </TableCell>
                       <TableCell className="text-right">{i.quantity}</TableCell>
-                      <TableCell className="text-right">{kshExact(i.unitPrice)}</TableCell>
-                      <TableCell className="text-right">{kshExact(i.lineTotal)}</TableCell>
+                      <TableCell className="whitespace-nowrap text-right">{kshExact(i.unitPrice)}</TableCell>
+                      <TableCell className="whitespace-nowrap text-right">{kshExact(i.lineTotal)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

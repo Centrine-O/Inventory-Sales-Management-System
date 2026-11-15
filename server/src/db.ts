@@ -81,6 +81,43 @@ CREATE TABLE IF NOT EXISTS stock_movements (
 );
 CREATE INDEX IF NOT EXISTS idx_movements_product ON stock_movements(product_id);
 
+CREATE TABLE IF NOT EXISTS suppliers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  contact_name TEXT NOT NULL DEFAULT '',
+  email TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL DEFAULT '',
+  address TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS purchase_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  po_number TEXT NOT NULL UNIQUE,
+  supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+  status TEXT NOT NULL CHECK (status IN ('draft', 'ordered', 'partially_received', 'received', 'cancelled')),
+  expected_date TEXT,
+  notes TEXT NOT NULL DEFAULT '',
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  ordered_at TEXT,
+  received_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_po_supplier ON purchase_orders(supplier_id);
+
+CREATE TABLE IF NOT EXISTS purchase_order_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+  product_id INTEGER NOT NULL REFERENCES products(id),
+  quantity_ordered INTEGER NOT NULL CHECK (quantity_ordered > 0),
+  quantity_received INTEGER NOT NULL DEFAULT 0 CHECK (quantity_received >= 0),
+  unit_cost_cents INTEGER NOT NULL CHECK (unit_cost_cents >= 0),
+  CHECK (quantity_received <= quantity_ordered)
+);
+CREATE INDEX IF NOT EXISTS idx_po_items_po ON purchase_order_items(po_id);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -106,9 +143,18 @@ export function openDb(file: string): DB {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.exec(SCHEMA);
+  migrate(db);
   const insert = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)");
   for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) insert.run(k, JSON.stringify(v));
   return db;
+}
+
+/** Additive migrations for databases created by earlier versions. */
+function migrate(db: DB) {
+  const productCols = (db.prepare("PRAGMA table_info(products)").all() as { name: string }[]).map((c) => c.name);
+  if (!productCols.includes("supplier_id")) {
+    db.exec("ALTER TABLE products ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)");
+  }
 }
 
 export const toCents = (amount: number) => Math.round(amount * 100);

@@ -147,8 +147,8 @@ const Dashboard = () => {
             <CardHeader className="flex flex-row items-center justify-between space-y-0">
               <CardTitle>Low stock watchlist</CardTitle>
               <Button variant="ghost" size="sm" asChild>
-                <Link to="/app/products">
-                  Products <ArrowRight className="ml-1 h-4 w-4" />
+                <Link to={isAdmin ? "/app/purchase-orders" : "/app/products"}>
+                  {isAdmin ? "Reorder" : "Products"} <ArrowRight className="ml-1 h-4 w-4" />
                 </Link>
               </Button>
             </CardHeader>
