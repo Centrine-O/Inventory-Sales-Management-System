@@ -1,9 +1,11 @@
 import { format, formatDistanceToNow, parseISO } from "date-fns";
 
-const money = new Intl.NumberFormat("en-KE", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-const compact = new Intl.NumberFormat("en-KE", { notation: "compact", maximumFractionDigits: 2 });
+const whole = new Intl.NumberFormat("en-KE", { maximumFractionDigits: 0 });
+const cents = new Intl.NumberFormat("en-KE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const compact = new Intl.NumberFormat("en-KE", { notation: "compact", maximumSignificantDigits: 3 });
 
-export const ksh = (n: number) => `KSh ${money.format(n)}`;
+/** Whole shillings when exact, otherwise always two decimals (never "1,234.5"). */
+export const ksh = (n: number) => `KSh ${Number.isInteger(Math.round(n * 100) / 100) ? whole.format(n) : cents.format(n)}`;
 export const kshExact = (n: number) =>
   `KSh ${n.toLocaleString("en-KE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 export const kshCompact = (n: number) => `KSh ${compact.format(n)}`;

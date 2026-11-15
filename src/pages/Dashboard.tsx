@@ -104,7 +104,7 @@ const Dashboard = () => {
               <span className="text-sm text-muted-foreground">{ksh(weekTotal)} total</span>
             </CardHeader>
             <CardContent>
-              {isLoading || !data ? <Skeleton className="h-[260px] w-full" /> : <DailyRevenueBars data={data.last7Days} />}
+              {isLoading || !data ? <Skeleton className="h-[360px] w-full" /> : <DailyRevenueBars data={data.last7Days} height={360} />}
             </CardContent>
           </Card>
 

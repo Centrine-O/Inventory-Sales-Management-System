@@ -58,7 +58,7 @@ export function ProductFormDialog({
   const margin = price > 0 ? ((price - cost) / price) * 100 : null;
 
   const onSubmit = (values: ProductForm) => {
-    const { stock, ...rest } = values;
+    const { stock, ...rest } = values as Required<ProductForm>;
     save.mutate(product ? { id: product.id, ...rest } : { ...rest, stock }, { onSuccess: () => onOpenChange(false) });
   };
 
