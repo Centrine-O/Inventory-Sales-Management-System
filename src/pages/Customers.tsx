@@ -1,229 +1,184 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Plus,
-  Search,
-  MoreVertical,
-  Edit,
-  Trash2,
-  Users,
-  Mail,
-  Phone,
-} from "lucide-react";
-
-const mockCustomers = [
-  {
-    id: 1,
-    name: "John Doe",
-    email: "john.doe@email.com",
-    phone: "+1 (555) 123-4567",
-    totalOrders: 15,
-    totalSpent: 1250.50,
-    status: "Active",
-    joinDate: "2024-01-15",
-  },
-  {
-    id: 2,
-    name: "Jane Smith",
-    email: "jane.smith@email.com",
-    phone: "+1 (555) 987-6543",
-    totalOrders: 8,
-    totalSpent: 650.75,
-    status: "Active",
-    joinDate: "2024-02-20",
-  },
-  {
-    id: 3,
-    name: "Bob Johnson",
-    email: "bob.johnson@email.com",
-    phone: "+1 (555) 456-7890",
-    totalOrders: 3,
-    totalSpent: 180.25,
-    status: "Inactive",
-    joinDate: "2024-03-10",
-  },
-];
+import { Plus, Search, MoreVertical, Edit, Trash2, Users, UserCheck, ShoppingBag, Wallet, Eye } from "lucide-react";
+import { ConfirmDialog, MetricCard, PageHeader, TableLoading, TableMessage } from "@/components/common";
+import { CustomerDetailDialog, CustomerFormDialog } from "@/components/customers/CustomerDialogs";
+import { useCustomers, useDeleteCustomer } from "@/hooks/api";
+import { useAuth } from "@/contexts/AuthContext";
+import { formatDate, initials, ksh, kshCompact } from "@/lib/format";
+import type { Customer } from "@/lib/types";
 
 const Customers = () => {
-  const [searchTerm, setSearchTerm] = useState("");
+  const { isAdmin } = useAuth();
+  const [params, setParams] = useSearchParams();
+  const viewParam = params.get("view");
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("all");
+  const { data: all = [], isLoading } = useCustomers();
 
-  const filteredCustomers = mockCustomers.filter(customer =>
-    customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    customer.email.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<Customer | null>(null);
+  const [deleting, setDeleting] = useState<Customer | null>(null);
+  const del = useDeleteCustomer();
 
-  const getInitials = (name: string) => {
-    return name.split(' ').map(n => n[0]).join('').toUpperCase();
+  const viewing = viewParam ? Number(viewParam) : null;
+  const setViewing = (id: number | null) => setParams(id ? { view: String(id) } : {}, { replace: true });
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return all.filter(
+      (c) =>
+        (!q || c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q) || c.phone.includes(q)) &&
+        (status === "all" || c.status === status),
+    );
+  }, [all, search, status]);
+
+  const totals = {
+    count: all.length,
+    active: all.filter((c) => c.status === "active").length,
+    orders: all.reduce((s, c) => s + c.totalOrders, 0),
+    revenue: all.reduce((s, c) => s + c.totalSpent, 0),
   };
 
   return (
     <Layout>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Customers</h1>
-            <p className="text-muted-foreground">
-              Manage your customer relationships and order history.
-            </p>
-          </div>
-          <Button className="bg-gradient-primary hover:bg-primary-dark">
-            <Plus className="mr-2 h-4 w-4" />
-            Add Customer
-          </Button>
+        <PageHeader
+          title="Customers"
+          description="Track customer history, contact details, and repeat buying patterns."
+          actions={
+            <Button
+              className="bg-gradient-primary hover:bg-primary-dark"
+              onClick={() => {
+                setEditing(null);
+                setFormOpen(true);
+              }}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Add Customer
+            </Button>
+          }
+        />
+
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricCard label="Total customers" value={totals.count} icon={<Users className="h-6 w-6" />} loading={isLoading} />
+          <MetricCard label="Active" value={totals.active} icon={<UserCheck className="h-6 w-6" />} tone="accent" loading={isLoading} />
+          <MetricCard label="Orders placed" value={totals.orders} icon={<ShoppingBag className="h-6 w-6" />} tone="warning" loading={isLoading} />
+          <MetricCard label="Lifetime revenue" value={kshCompact(totals.revenue)} icon={<Wallet className="h-6 w-6" />} tone="accent" loading={isLoading} />
         </div>
 
-        {/* Stats Cards */}
-        <div className="grid gap-4 md:grid-cols-4">
-          <Card className="shadow-soft">
-            <CardContent className="p-6">
-              <div className="flex items-center">
-                <Users className="h-8 w-8 text-primary" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-muted-foreground">Total Customers</p>
-                  <p className="text-2xl font-bold">{mockCustomers.length}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card className="shadow-soft">
-            <CardContent className="p-6">
-              <div className="flex items-center">
-                <Users className="h-8 w-8 text-accent" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-muted-foreground">Active</p>
-                  <p className="text-2xl font-bold">
-                    {mockCustomers.filter(c => c.status === "Active").length}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-soft">
-            <CardContent className="p-6">
-              <div className="flex items-center">
-                <Mail className="h-8 w-8 text-warning" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-muted-foreground">Total Orders</p>
-                  <p className="text-2xl font-bold">
-                    {mockCustomers.reduce((sum, c) => sum + c.totalOrders, 0)}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-soft">
-            <CardContent className="p-6">
-              <div className="flex items-center">
-                <Phone className="h-8 w-8 text-accent" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-muted-foreground">Total Revenue</p>
-                  <p className="text-2xl font-bold">
-                    ${mockCustomers.reduce((sum, c) => sum + c.totalSpent, 0).toFixed(2)}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Customers Table */}
         <Card className="shadow-medium">
           <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Customer List</CardTitle>
-              <div className="flex items-center space-x-2">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <CardTitle>Customer list</CardTitle>
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
-                    placeholder="Search customers..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10 w-64"
+                    placeholder="Search name, phone, email..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="pl-10 sm:w-64"
                   />
                 </div>
+                <Select value={status} onValueChange={setStatus}>
+                  <SelectTrigger className="sm:w-36">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="inactive">Inactive</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Customer</TableHead>
-                  <TableHead>Contact</TableHead>
-                  <TableHead>Total Orders</TableHead>
-                  <TableHead>Total Spent</TableHead>
+                  <TableHead>Phone</TableHead>
+                  <TableHead className="text-right">Orders</TableHead>
+                  <TableHead className="text-right">Total spent</TableHead>
+                  <TableHead>Last purchase</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Join Date</TableHead>
-                  <TableHead className="w-[50px]"></TableHead>
+                  <TableHead className="w-[50px]" />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredCustomers.map((customer) => (
-                  <TableRow key={customer.id}>
+                {isLoading && <TableLoading cols={7} />}
+                {!isLoading && filtered.length === 0 && (
+                  <TableMessage cols={7}>{all.length === 0 ? "No customers yet." : "No customers match these filters."}</TableMessage>
+                )}
+                {filtered.map((c) => (
+                  <TableRow key={c.id} className="cursor-pointer" onClick={() => setViewing(c.id)}>
                     <TableCell>
-                      <div className="flex items-center space-x-3">
-                        <Avatar>
-                          <AvatarFallback>{getInitials(customer.name)}</AvatarFallback>
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-9 w-9">
+                          <AvatarFallback>{initials(c.name)}</AvatarFallback>
                         </Avatar>
-                        <div>
-                          <p className="font-medium">{customer.name}</p>
-                          <p className="text-sm text-muted-foreground">{customer.email}</p>
+                        <div className="min-w-0">
+                          <p className="font-medium">{c.name}</p>
+                          <p className="truncate text-sm text-muted-foreground">{c.email || "No email"}</p>
                         </div>
                       </div>
                     </TableCell>
+                    <TableCell className="whitespace-nowrap">{c.phone || "—"}</TableCell>
+                    <TableCell className="text-right">{c.totalOrders}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right">{ksh(c.totalSpent)}</TableCell>
+                    <TableCell className="whitespace-nowrap">{c.lastPurchaseAt ? formatDate(c.lastPurchaseAt) : "—"}</TableCell>
                     <TableCell>
-                      <div>
-                        <p className="text-sm">{customer.phone}</p>
-                        <p className="text-sm text-muted-foreground">{customer.email}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell>{customer.totalOrders}</TableCell>
-                    <TableCell>${customer.totalSpent.toFixed(2)}</TableCell>
-                    <TableCell>
-                      <Badge variant={customer.status === "Active" ? "default" : "secondary"}>
-                        {customer.status}
+                      <Badge variant={c.status === "active" ? "default" : "secondary"} className="capitalize">
+                        {c.status}
                       </Badge>
                     </TableCell>
-                    <TableCell>{new Date(customer.joinDate).toLocaleDateString()}</TableCell>
-                    <TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
+                          <Button variant="ghost" size="icon" aria-label={`Actions for ${c.name}`}>
                             <MoreVertical className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setViewing(c.id)}>
+                            <Eye className="mr-2 h-4 w-4" />
+                            View history
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setEditing(c);
+                              setFormOpen(true);
+                            }}
+                          >
                             <Edit className="mr-2 h-4 w-4" />
                             Edit
                           </DropdownMenuItem>
-                          <DropdownMenuItem className="text-destructive">
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
-                          </DropdownMenuItem>
+                          {isAdmin && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem className="text-destructive" onClick={() => setDeleting(c)}>
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            </>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -234,6 +189,19 @@ const Customers = () => {
           </CardContent>
         </Card>
       </div>
+
+      <CustomerFormDialog open={formOpen} onOpenChange={setFormOpen} customer={editing} />
+      <CustomerDetailDialog customerId={viewing} onOpenChange={(o) => !o && setViewing(null)} />
+      <ConfirmDialog
+        open={deleting !== null}
+        onOpenChange={(o) => !o && setDeleting(null)}
+        title={`Delete ${deleting?.name}?`}
+        description="This permanently removes the customer. Customers with sales history can't be deleted — mark them inactive instead."
+        confirmLabel="Delete"
+        destructive
+        pending={del.isPending}
+        onConfirm={() => deleting && del.mutate(deleting, { onSuccess: () => setDeleting(null) })}
+      />
     </Layout>
   );
 };

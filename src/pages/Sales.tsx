@@ -1,235 +1,144 @@
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Plus,
-  Search,
-  MoreVertical,
-  Eye,
-  Download,
-  ShoppingCart,
-  DollarSign,
-  FileText,
-  TrendingUp,
-} from "lucide-react";
-
-const mockSales = [
-  {
-    id: "INV-001",
-    customer: "John Doe",
-    date: "2024-01-15",
-    items: 3,
-    total: 189.99,
-    status: "Paid",
-    paymentMethod: "Credit Card",
-  },
-  {
-    id: "INV-002",
-    customer: "Jane Smith",
-    date: "2024-01-14",
-    items: 1,
-    total: 45.50,
-    status: "Paid",
-    paymentMethod: "Cash",
-  },
-  {
-    id: "INV-003",
-    customer: "Bob Johnson",
-    date: "2024-01-13",
-    items: 2,
-    total: 129.99,
-    status: "Pending",
-    paymentMethod: "Bank Transfer",
-  },
-  {
-    id: "INV-004",
-    customer: "Alice Brown",
-    date: "2024-01-12",
-    items: 1,
-    total: 75.00,
-    status: "Paid",
-    paymentMethod: "PayPal",
-  },
-];
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Plus, Search, Download, ShoppingCart, Wallet, Clock, Receipt, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { MetricCard, PageHeader, SaleStatusBadge, TableLoading, TableMessage } from "@/components/common";
+import { NewSaleDialog } from "@/components/sales/NewSaleDialog";
+import { SaleDetailDialog } from "@/components/sales/SaleDetailDialog";
+import { useSales } from "@/hooks/api";
+import { api, errorMessage, qs } from "@/lib/api";
+import { formatDateTime, ksh, kshCompact } from "@/lib/format";
 
 const Sales = () => {
-  const [searchTerm, setSearchTerm] = useState("");
+  const [params, setParams] = useSearchParams();
+  const viewing = params.get("view") ? Number(params.get("view")) : null;
+  const setViewing = (id: number | null) => setParams(id ? { view: String(id) } : {}, { replace: true });
 
-  const filteredSales = mockSales.filter(sale =>
-    sale.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    sale.customer.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const [searchInput, setSearchInput] = useState("");
+  const [status, setStatus] = useState("all");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [newOpen, setNewOpen] = useState(params.get("new") === "1");
+  const [exporting, setExporting] = useState(false);
 
-  const getStatusBadgeVariant = (status: string) => {
-    switch (status) {
-      case "Paid":
-        return "default";
-      case "Pending":
-        return "secondary";
-      case "Cancelled":
-        return "destructive";
-      default:
-        return "default";
+  const filters = { search: searchInput.trim() || undefined, status: status === "all" ? undefined : status, from, to };
+  const { data: sales = [], isLoading } = useSales(filters);
+
+  const active = sales.filter((s) => s.status !== "cancelled");
+  const revenue = active.reduce((s, x) => s + x.total, 0);
+  const pending = sales.filter((s) => s.status === "pending");
+
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      await api.download(`/sales/export.csv${qs(filters)}`, `sales${from ? `-${from}` : ""}${to ? `-to-${to}` : ""}.csv`);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setExporting(false);
     }
   };
-
-  const totalSales = mockSales.reduce((sum, sale) => sum + sale.total, 0);
-  const paidSales = mockSales.filter(sale => sale.status === "Paid");
-  const pendingSales = mockSales.filter(sale => sale.status === "Pending");
 
   return (
     <Layout>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Sales</h1>
-            <p className="text-muted-foreground">
-              Track and manage your sales orders and invoices.
-            </p>
-          </div>
-          <Button className="bg-gradient-primary hover:bg-primary-dark">
-            <Plus className="mr-2 h-4 w-4" />
-            New Sale
-          </Button>
+        <PageHeader
+          title="Sales"
+          description="Record transactions, follow up on pending payments, and review invoice history."
+          actions={
+            <Button className="bg-gradient-primary hover:bg-primary-dark" onClick={() => setNewOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              New Sale
+            </Button>
+          }
+        />
+
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricCard label="Revenue (filtered)" value={kshCompact(revenue)} icon={<Wallet className="h-6 w-6" />} loading={isLoading} />
+          <MetricCard label="Orders" value={active.length} icon={<ShoppingCart className="h-6 w-6" />} tone="accent" loading={isLoading} />
+          <MetricCard
+            label="Average order"
+            value={ksh(active.length ? Math.round(revenue / active.length) : 0)}
+            icon={<Receipt className="h-6 w-6" />}
+            tone="accent"
+            loading={isLoading}
+          />
+          <MetricCard
+            label="Pending payment"
+            value={pending.length}
+            icon={<Clock className="h-6 w-6" />}
+            tone="warning"
+            loading={isLoading}
+            hint={pending.length > 0 && `${ksh(pending.reduce((s, x) => s + x.total, 0))} outstanding`}
+          />
         </div>
 
-        {/* Stats Cards */}
-        <div className="grid gap-4 md:grid-cols-4">
-          <Card className="shadow-soft">
-            <CardContent className="p-6">
-              <div className="flex items-center">
-                <DollarSign className="h-8 w-8 text-primary" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-muted-foreground">Total Sales</p>
-                  <p className="text-2xl font-bold">${totalSales.toFixed(2)}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card className="shadow-soft">
-            <CardContent className="p-6">
-              <div className="flex items-center">
-                <ShoppingCart className="h-8 w-8 text-accent" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-muted-foreground">Orders</p>
-                  <p className="text-2xl font-bold">{mockSales.length}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-soft">
-            <CardContent className="p-6">
-              <div className="flex items-center">
-                <FileText className="h-8 w-8 text-accent" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-muted-foreground">Paid</p>
-                  <p className="text-2xl font-bold">{paidSales.length}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-soft">
-            <CardContent className="p-6">
-              <div className="flex items-center">
-                <TrendingUp className="h-8 w-8 text-warning" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-muted-foreground">Pending</p>
-                  <p className="text-2xl font-bold">{pendingSales.length}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Sales Table */}
         <Card className="shadow-medium">
           <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Sales History</CardTitle>
-              <div className="flex items-center space-x-2">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <CardTitle>Sales history</CardTitle>
+              <div className="flex flex-col flex-wrap gap-2 sm:flex-row">
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
-                    placeholder="Search sales..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10 w-64"
+                    placeholder="Invoice or customer..."
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    className="pl-10 sm:w-56"
                   />
                 </div>
-                <Button variant="outline">
-                  <Download className="mr-2 h-4 w-4" />
-                  Export
+                <Select value={status} onValueChange={setStatus}>
+                  <SelectTrigger className="sm:w-36">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    <SelectItem value="paid">Paid</SelectItem>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className="sm:w-40" aria-label="From date" />
+                <Input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className="sm:w-40" aria-label="To date" />
+                <Button variant="outline" onClick={exportCsv} disabled={exporting}>
+                  {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                  Export CSV
                 </Button>
               </div>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Invoice ID</TableHead>
+                  <TableHead>Invoice</TableHead>
                   <TableHead>Customer</TableHead>
                   <TableHead>Date</TableHead>
-                  <TableHead>Items</TableHead>
-                  <TableHead>Total</TableHead>
+                  <TableHead className="text-right">Items</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
                   <TableHead>Payment</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="w-[50px]"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredSales.map((sale) => (
-                  <TableRow key={sale.id}>
-                    <TableCell className="font-mono font-medium">{sale.id}</TableCell>
-                    <TableCell>{sale.customer}</TableCell>
-                    <TableCell>{new Date(sale.date).toLocaleDateString()}</TableCell>
-                    <TableCell>{sale.items}</TableCell>
-                    <TableCell className="font-semibold">${sale.total.toFixed(2)}</TableCell>
-                    <TableCell>{sale.paymentMethod}</TableCell>
+                {isLoading && <TableLoading cols={7} />}
+                {!isLoading && sales.length === 0 && <TableMessage cols={7}>No sales match these filters.</TableMessage>}
+                {sales.map((s) => (
+                  <TableRow key={s.id} className="cursor-pointer" onClick={() => setViewing(s.id)}>
+                    <TableCell className="font-mono font-medium">{s.invoiceNo}</TableCell>
+                    <TableCell>{s.customerName}</TableCell>
+                    <TableCell className="whitespace-nowrap">{formatDateTime(s.createdAt)}</TableCell>
+                    <TableCell className="text-right">{s.itemCount}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right font-semibold">{ksh(s.total)}</TableCell>
+                    <TableCell>{s.paymentMethod}</TableCell>
                     <TableCell>
-                      <Badge variant={getStatusBadgeVariant(sale.status)}>
-                        {sale.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem>
-                            <Eye className="mr-2 h-4 w-4" />
-                            View Details
-                          </DropdownMenuItem>
-                          <DropdownMenuItem>
-                            <Download className="mr-2 h-4 w-4" />
-                            Download Invoice
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      <SaleStatusBadge status={s.status} />
                     </TableCell>
                   </TableRow>
                 ))}
@@ -238,6 +147,9 @@ const Sales = () => {
           </CardContent>
         </Card>
       </div>
+
+      <NewSaleDialog open={newOpen} onOpenChange={setNewOpen} onCreated={(sale) => setViewing(sale.id)} />
+      <SaleDetailDialog saleId={viewing} onOpenChange={(o) => !o && setViewing(null)} />
     </Layout>
   );
 };

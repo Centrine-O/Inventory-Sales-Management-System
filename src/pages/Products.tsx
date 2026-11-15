@@ -1,230 +1,199 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Plus,
-  Search,
-  MoreVertical,
-  Edit,
-  Trash2,
-  Package,
-  AlertTriangle,
-} from "lucide-react";
+import { Plus, Search, MoreVertical, Edit, Trash2, Package, AlertTriangle, PackageX, Boxes, Eye } from "lucide-react";
+import { ConfirmDialog, MetricCard, PageHeader, StockBadge, TableLoading, TableMessage } from "@/components/common";
+import { ProductDetailDialog, ProductFormDialog, StockAdjustDialog } from "@/components/products/ProductDialogs";
+import { useCategories, useDeleteProduct, useProducts } from "@/hooks/api";
+import { useAuth } from "@/contexts/AuthContext";
+import { ksh } from "@/lib/format";
+import type { Product, StockStatus } from "@/lib/types";
 
-const mockProducts = [
-  {
-    id: 1,
-    name: "Wireless Bluetooth Headphones",
-    sku: "WBH-001",
-    category: "Electronics",
-    price: 89.99,
-    stock: 45,
-    status: "In Stock",
-  },
-  {
-    id: 2,
-    name: "Ergonomic Office Chair",
-    sku: "EOC-002",
-    category: "Furniture",
-    price: 299.99,
-    stock: 12,
-    status: "In Stock",
-  },
-  {
-    id: 3,
-    name: "USB-C Hub",
-    sku: "UCH-003",
-    category: "Electronics",
-    price: 45.50,
-    stock: 3,
-    status: "Low Stock",
-  },
-  {
-    id: 4,
-    name: "Standing Desk",
-    sku: "SD-004",
-    category: "Furniture",
-    price: 549.99,
-    stock: 0,
-    status: "Out of Stock",
-  },
-];
+const ALL = "all";
 
 const Products = () => {
-  const [searchTerm, setSearchTerm] = useState("");
+  const { isAdmin } = useAuth();
+  const [params, setParams] = useSearchParams();
+  const search = params.get("search") ?? "";
+  const [status, setStatus] = useState<StockStatus | typeof ALL>(ALL);
+  const [category, setCategory] = useState<string>(ALL);
 
-  const filteredProducts = mockProducts.filter(product =>
-    product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    product.sku.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const { data: all = [], isLoading: loadingAll } = useProducts();
+  const { data: categories = [] } = useCategories();
 
-  const getStatusBadgeVariant = (status: string) => {
-    switch (status) {
-      case "In Stock":
-        return "default";
-      case "Low Stock":
-        return "secondary";
-      case "Out of Stock":
-        return "destructive";
-      default:
-        return "default";
-    }
+  const [editing, setEditing] = useState<Product | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [adjusting, setAdjusting] = useState<Product | null>(null);
+  const [deleting, setDeleting] = useState<Product | null>(null);
+  const [viewing, setViewing] = useState<number | null>(null);
+  const del = useDeleteProduct();
+
+  // Filter client-side: the catalog is small and this keeps typing instant.
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return all.filter(
+      (p) =>
+        (!q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.category.toLowerCase().includes(q)) &&
+        (status === ALL || p.status === status) &&
+        (category === ALL || p.category === category),
+    );
+  }, [all, search, status, category]);
+
+  const counts = {
+    total: all.length,
+    in: all.filter((p) => p.status === "in_stock").length,
+    low: all.filter((p) => p.status === "low_stock").length,
+    out: all.filter((p) => p.status === "out_of_stock").length,
   };
+  const cols = isAdmin ? 7 : 6;
 
   return (
     <Layout>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Products</h1>
-            <p className="text-muted-foreground">
-              Manage your product inventory and pricing.
-            </p>
-          </div>
-          <Button className="bg-gradient-primary hover:bg-primary-dark">
-            <Plus className="mr-2 h-4 w-4" />
-            Add Product
-          </Button>
+        <PageHeader
+          title="Products"
+          description="Manage stock levels, pricing, and reorder pressure across the catalog."
+          actions={
+            isAdmin && (
+              <Button
+                className="bg-gradient-primary hover:bg-primary-dark"
+                onClick={() => {
+                  setEditing(null);
+                  setFormOpen(true);
+                }}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add Product
+              </Button>
+            )
+          }
+        />
+
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricCard label="Total products" value={counts.total} icon={<Package className="h-6 w-6" />} loading={loadingAll} />
+          <MetricCard label="In stock" value={counts.in} icon={<Boxes className="h-6 w-6" />} tone="accent" loading={loadingAll} />
+          <MetricCard label="Low stock" value={counts.low} icon={<AlertTriangle className="h-6 w-6" />} tone="warning" loading={loadingAll} />
+          <MetricCard label="Out of stock" value={counts.out} icon={<PackageX className="h-6 w-6" />} tone="destructive" loading={loadingAll} />
         </div>
 
-        {/* Stats Cards */}
-        <div className="grid gap-4 md:grid-cols-4">
-          <Card className="shadow-soft">
-            <CardContent className="p-6">
-              <div className="flex items-center">
-                <Package className="h-8 w-8 text-primary" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-muted-foreground">Total Products</p>
-                  <p className="text-2xl font-bold">{mockProducts.length}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card className="shadow-soft">
-            <CardContent className="p-6">
-              <div className="flex items-center">
-                <Package className="h-8 w-8 text-accent" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-muted-foreground">In Stock</p>
-                  <p className="text-2xl font-bold">
-                    {mockProducts.filter(p => p.status === "In Stock").length}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-soft">
-            <CardContent className="p-6">
-              <div className="flex items-center">
-                <AlertTriangle className="h-8 w-8 text-warning" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-muted-foreground">Low Stock</p>
-                  <p className="text-2xl font-bold">
-                    {mockProducts.filter(p => p.status === "Low Stock").length}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-soft">
-            <CardContent className="p-6">
-              <div className="flex items-center">
-                <Package className="h-8 w-8 text-destructive" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-muted-foreground">Out of Stock</p>
-                  <p className="text-2xl font-bold">
-                    {mockProducts.filter(p => p.status === "Out of Stock").length}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Products Table */}
         <Card className="shadow-medium">
           <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Product List</CardTitle>
-              <div className="flex items-center space-x-2">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <CardTitle>Product list</CardTitle>
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
-                    placeholder="Search products..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10 w-64"
+                    placeholder="Search name, SKU, category..."
+                    value={search}
+                    onChange={(e) => setParams(e.target.value ? { search: e.target.value } : {}, { replace: true })}
+                    className="pl-10 sm:w-64"
                   />
                 </div>
+                <Select value={category} onValueChange={setCategory}>
+                  <SelectTrigger className="sm:w-44">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL}>All categories</SelectItem>
+                    {categories.map((c) => (
+                      <SelectItem key={c} value={c}>
+                        {c}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={status} onValueChange={(v) => setStatus(v as StockStatus | typeof ALL)}>
+                  <SelectTrigger className="sm:w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL}>All statuses</SelectItem>
+                    <SelectItem value="in_stock">In stock</SelectItem>
+                    <SelectItem value="low_stock">Low stock</SelectItem>
+                    <SelectItem value="out_of_stock">Out of stock</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Product</TableHead>
                   <TableHead>SKU</TableHead>
                   <TableHead>Category</TableHead>
-                  <TableHead>Price</TableHead>
-                  <TableHead>Stock</TableHead>
+                  <TableHead className="text-right">Price</TableHead>
+                  <TableHead className="text-right">Stock</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="w-[50px]"></TableHead>
+                  {isAdmin && <TableHead className="w-[50px]" />}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredProducts.map((product) => (
-                  <TableRow key={product.id}>
-                    <TableCell className="font-medium">{product.name}</TableCell>
-                    <TableCell>{product.sku}</TableCell>
-                    <TableCell>{product.category}</TableCell>
-                    <TableCell>${product.price}</TableCell>
-                    <TableCell>{product.stock}</TableCell>
+                {loadingAll && <TableLoading cols={cols} />}
+                {!loadingAll && filtered.length === 0 && (
+                  <TableMessage cols={cols}>
+                    {all.length === 0 ? "No products yet. Add your first product to get started." : "No products match these filters."}
+                  </TableMessage>
+                )}
+                {filtered.map((p) => (
+                  <TableRow key={p.id} className="cursor-pointer" onClick={() => setViewing(p.id)}>
+                    <TableCell className="font-medium">{p.name}</TableCell>
+                    <TableCell className="font-mono text-sm">{p.sku}</TableCell>
+                    <TableCell>{p.category}</TableCell>
+                    <TableCell className="text-right">{ksh(p.price)}</TableCell>
+                    <TableCell className="text-right font-medium">{p.stock}</TableCell>
                     <TableCell>
-                      <Badge variant={getStatusBadgeVariant(product.status)}>
-                        {product.status}
-                      </Badge>
+                      <StockBadge status={p.status} />
                     </TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem>
-                            <Edit className="mr-2 h-4 w-4" />
-                            Edit
-                          </DropdownMenuItem>
-                          <DropdownMenuItem className="text-destructive">
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
+                    {isAdmin && (
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" aria-label={`Actions for ${p.name}`}>
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => setViewing(p.id)}>
+                              <Eye className="mr-2 h-4 w-4" />
+                              View history
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setEditing(p);
+                                setFormOpen(true);
+                              }}
+                            >
+                              <Edit className="mr-2 h-4 w-4" />
+                              Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setAdjusting(p)}>
+                              <Boxes className="mr-2 h-4 w-4" />
+                              Adjust stock
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem className="text-destructive" onClick={() => setDeleting(p)}>
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>
@@ -232,6 +201,20 @@ const Products = () => {
           </CardContent>
         </Card>
       </div>
+
+      <ProductFormDialog open={formOpen} onOpenChange={setFormOpen} product={editing} />
+      <StockAdjustDialog product={adjusting} onOpenChange={(o) => !o && setAdjusting(null)} />
+      <ProductDetailDialog productId={viewing} onOpenChange={(o) => !o && setViewing(null)} />
+      <ConfirmDialog
+        open={deleting !== null}
+        onOpenChange={(o) => !o && setDeleting(null)}
+        title={`Delete ${deleting?.name}?`}
+        description="Products that appear on past sales are archived instead of deleted, so invoices and reports stay intact."
+        confirmLabel="Delete"
+        destructive
+        pending={del.isPending}
+        onConfirm={() => deleting && del.mutate(deleting, { onSuccess: () => setDeleting(null) })}
+      />
     </Layout>
   );
 };
