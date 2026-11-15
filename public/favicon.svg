@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d5df2"/>
+      <stop offset="1" stop-color="#5c8ef0"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+  <!-- Isometric stock box -->
+  <path d="M32 12 50 21.5 32 31 14 21.5Z" fill="#fff"/>
+  <path d="M14 25.5 30 34v18L14 43.5Z" fill="#fff" fill-opacity=".85"/>
+  <path d="M50 25.5 34 34v18l16-8.5Z" fill="#fff" fill-opacity=".65"/>
+</svg>
