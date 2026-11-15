@@ -101,9 +101,10 @@ let invoice = 0;
 db.transaction(() => {
   for (let day = 60; day >= 0; day--) {
     const weekend = [0, 6].includes(daysAgo(day).getDay());
-    const count = int(1, weekend ? 6 : 4);
-    for (let n = 0; n < count; n++) {
-      const when = daysAgo(day, int(8, 18));
+    const count = int(2, weekend ? 6 : 4);
+    const hours = Array.from({ length: count }, () => int(8, 18)).sort((a, b) => a - b);
+    for (const hour of hours) {
+      const when = daysAgo(day, hour);
       if (when > now) continue;
       const lines = new Map<P, number>();
       for (let k = int(1, 3); k > 0; k--) {
@@ -133,10 +134,10 @@ db.transaction(() => {
         }
       }
     }
-    // Periodic restocks keep popular items available.
-    if (day % 14 === 0) {
+    // Weekly supplier deliveries keep popular items available.
+    if (day % 7 === 0) {
       for (const p of catalog) {
-        if (p.stock < 20 && rand() < 0.6) {
+        if (p.stock < 15) {
           const q = int(15, 40);
           p.stock += q;
           addMovement.run(p.id, q, "restock", "Supplier delivery", adminId, sqlDate(daysAgo(day, 7)));
