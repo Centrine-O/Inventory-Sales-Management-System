@@ -15,9 +15,20 @@ const createSchema = z.object({
   cost: money.default(0),
   stock: z.coerce.number().int().min(0).default(0),
   reorderLevel: z.coerce.number().int().min(0).default(5),
+  supplierId: z.coerce.number().int().positive().nullable().default(null),
 });
 
-const updateSchema = createSchema.omit({ stock: true }).partial();
+// Defaults are stripped so omitted fields stay untouched on update.
+const updateSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  sku: z.string().trim().min(1).max(50),
+  category: z.string().trim().min(1).max(100),
+  description: z.string().trim().max(2000),
+  price: money,
+  cost: money,
+  reorderLevel: z.coerce.number().int().min(0),
+  supplierId: z.coerce.number().int().positive().nullable(),
+}).partial();
 
 const stockSchema = z.object({
   change: z.coerce
@@ -32,11 +43,18 @@ const listSchema = z.object({
   search: z.string().trim().optional(),
   status: z.enum(["in_stock", "low_stock", "out_of_stock"]).optional(),
   category: z.string().trim().optional(),
+  supplierId: z.coerce.number().int().positive().optional(),
   includeArchived: z.enum(["true", "false"]).optional(),
 });
 
 export function productsRouter(db: DB) {
   const r = Router();
+
+  const checkSupplier = (id: number | null | undefined) => {
+    if (id && !db.prepare("SELECT 1 FROM suppliers WHERE id = ?").get(id)) {
+      throw new HttpError(400, "Supplier not found");
+    }
+  };
 
   const getProduct = (id: number) => {
     const row = db.prepare("SELECT * FROM products WHERE id = ?").get(id) as ProductRow | undefined;
@@ -57,6 +75,10 @@ export function productsRouter(db: DB) {
     if (q.category) {
       where.push("category = ?");
       params.push(q.category);
+    }
+    if (q.supplierId) {
+      where.push("supplier_id = ?");
+      params.push(q.supplierId);
     }
     if (q.status === "out_of_stock") where.push("stock <= 0");
     if (q.status === "low_stock") where.push("stock > 0 AND stock <= reorder_level");
@@ -105,11 +127,12 @@ export function productsRouter(db: DB) {
   r.post("/", requireRole("admin"), (req, res) => {
     const body = createSchema.parse(req.body);
     const me = currentUser(req);
+    checkSupplier(body.supplierId);
     const id = db.transaction(() => {
       const info = db
         .prepare(
-          `INSERT INTO products (name, sku, category, description, price_cents, cost_cents, stock, reorder_level)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO products (name, sku, category, description, price_cents, cost_cents, stock, reorder_level, supplier_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           body.name,
@@ -120,6 +143,7 @@ export function productsRouter(db: DB) {
           toCents(body.cost),
           body.stock,
           body.reorderLevel,
+          body.supplierId,
         );
       const productId = Number(info.lastInsertRowid);
       if (body.stock > 0) {
@@ -136,9 +160,10 @@ export function productsRouter(db: DB) {
     const id = idParam(req);
     const body = updateSchema.parse(req.body);
     const p = getProduct(id);
+    checkSupplier(body.supplierId);
     db.prepare(
       `UPDATE products SET name = ?, sku = ?, category = ?, description = ?, price_cents = ?, cost_cents = ?,
-         reorder_level = ?, updated_at = datetime('now') WHERE id = ?`,
+         reorder_level = ?, supplier_id = ?, updated_at = datetime('now') WHERE id = ?`,
     ).run(
       body.name ?? p.name,
       body.sku ?? p.sku,
@@ -147,6 +172,7 @@ export function productsRouter(db: DB) {
       body.price !== undefined ? toCents(body.price) : p.price_cents,
       body.cost !== undefined ? toCents(body.cost) : p.cost_cents,
       body.reorderLevel ?? p.reorder_level,
+      body.supplierId === undefined ? p.supplier_id : body.supplierId,
       id,
     );
     res.json(mapProduct(getProduct(id)));
@@ -173,11 +199,13 @@ export function productsRouter(db: DB) {
     res.json(mapProduct(getProduct(id)));
   });
 
-  /** Products referenced by past sales are archived (kept for history); unused ones are removed. */
+  /** Products referenced by past sales or purchase orders are archived (kept for history); unused ones are removed. */
   r.delete("/:id", requireRole("admin"), (req, res) => {
     const id = idParam(req);
     getProduct(id);
-    const used = db.prepare("SELECT 1 FROM sale_items WHERE product_id = ? LIMIT 1").get(id);
+    const used =
+      db.prepare("SELECT 1 FROM sale_items WHERE product_id = ? LIMIT 1").get(id) ??
+      db.prepare("SELECT 1 FROM purchase_order_items WHERE product_id = ? LIMIT 1").get(id);
     if (used) {
       db.prepare("UPDATE products SET archived = 1, updated_at = datetime('now') WHERE id = ?").run(id);
       res.json({ archived: true });

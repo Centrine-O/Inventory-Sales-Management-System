@@ -21,6 +21,7 @@ export interface ProductRow {
   cost_cents: number;
   stock: number;
   reorder_level: number;
+  supplier_id: number | null;
   archived: number;
   created_at: string;
   updated_at: string;
@@ -36,6 +37,7 @@ export const mapProduct = (r: ProductRow) => ({
   cost: fromCents(r.cost_cents),
   stock: r.stock,
   reorderLevel: r.reorder_level,
+  supplierId: r.supplier_id ?? null,
   status: stockStatus(r.stock, r.reorder_level),
   archived: r.archived === 1,
   createdAt: iso(r.created_at),
