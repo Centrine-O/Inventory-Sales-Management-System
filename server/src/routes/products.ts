@@ -5,6 +5,14 @@ import { HttpError, currentUser, idParam, requireRole } from "../http.js";
 import { iso, mapProduct, type ProductRow } from "../mappers.js";
 
 const money = z.coerce.number().min(0).max(100_000_000);
+/** Printable barcode characters only; blank means "no barcode". */
+const barcode = z
+  .string()
+  .trim()
+  .max(64)
+  .regex(/^[\x21-\x7E]*$/, "can only contain letters, digits and symbols, no spaces")
+  .transform((v) => (v === "" ? null : v))
+  .nullable();
 
 const createSchema = z.object({
   name: z.string().trim().min(1).max(200),
@@ -16,6 +24,7 @@ const createSchema = z.object({
   stock: z.coerce.number().int().min(0).default(0),
   reorderLevel: z.coerce.number().int().min(0).default(5),
   supplierId: z.coerce.number().int().positive().nullable().default(null),
+  barcode: barcode.default(null),
 });
 
 // Defaults are stripped so omitted fields stay untouched on update.
@@ -28,6 +37,7 @@ const updateSchema = z.object({
   cost: money,
   reorderLevel: z.coerce.number().int().min(0),
   supplierId: z.coerce.number().int().positive().nullable(),
+  barcode,
 }).partial();
 
 const stockSchema = z.object({
@@ -68,9 +78,9 @@ export function productsRouter(db: DB) {
     const params: unknown[] = [];
     if (q.includeArchived !== "true") where.push("archived = 0");
     if (q.search) {
-      where.push("(name LIKE ? OR sku LIKE ? OR category LIKE ?)");
+      where.push("(name LIKE ? OR sku LIKE ? OR category LIKE ? OR barcode = ?)");
       const like = `%${q.search}%`;
-      params.push(like, like, like);
+      params.push(like, like, like, q.search);
     }
     if (q.category) {
       where.push("category = ?");
@@ -86,6 +96,16 @@ export function productsRouter(db: DB) {
 
     const sql = `SELECT * FROM products ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY name`;
     res.json((db.prepare(sql).all(...params) as ProductRow[]).map(mapProduct));
+  });
+
+  /** Exact match on barcode, then SKU — what a scanner or a typed code resolves to. */
+  r.get("/lookup", (req, res) => {
+    const code = String(req.query.code ?? "").trim();
+    if (!code) throw new HttpError(400, "Enter a code");
+    const row = (db.prepare("SELECT * FROM products WHERE barcode = ? AND archived = 0").get(code) ??
+      db.prepare("SELECT * FROM products WHERE sku = ? COLLATE NOCASE AND archived = 0").get(code)) as ProductRow | undefined;
+    if (!row) throw new HttpError(404, `No product with barcode or SKU "${code}"`);
+    res.json(mapProduct(row));
   });
 
   r.get("/categories", (_req, res) => {
@@ -131,8 +151,8 @@ export function productsRouter(db: DB) {
     const id = db.transaction(() => {
       const info = db
         .prepare(
-          `INSERT INTO products (name, sku, category, description, price_cents, cost_cents, stock, reorder_level, supplier_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO products (name, sku, category, description, price_cents, cost_cents, stock, reorder_level, supplier_id, barcode)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           body.name,
@@ -144,6 +164,7 @@ export function productsRouter(db: DB) {
           body.stock,
           body.reorderLevel,
           body.supplierId,
+          body.barcode,
         );
       const productId = Number(info.lastInsertRowid);
       if (body.stock > 0) {
@@ -163,7 +184,7 @@ export function productsRouter(db: DB) {
     checkSupplier(body.supplierId);
     db.prepare(
       `UPDATE products SET name = ?, sku = ?, category = ?, description = ?, price_cents = ?, cost_cents = ?,
-         reorder_level = ?, supplier_id = ?, updated_at = datetime('now') WHERE id = ?`,
+         reorder_level = ?, supplier_id = ?, barcode = ?, updated_at = datetime('now') WHERE id = ?`,
     ).run(
       body.name ?? p.name,
       body.sku ?? p.sku,
@@ -173,6 +194,7 @@ export function productsRouter(db: DB) {
       body.cost !== undefined ? toCents(body.cost) : p.cost_cents,
       body.reorderLevel ?? p.reorder_level,
       body.supplierId === undefined ? p.supplier_id : body.supplierId,
+      body.barcode === undefined ? p.barcode : body.barcode,
       id,
     );
     res.json(mapProduct(getProduct(id)));

@@ -77,6 +77,7 @@ export interface ProductInput {
   stock?: number;
   reorderLevel: number;
   supplierId: number | null;
+  barcode: string;
 }
 
 export function useSaveProduct() {

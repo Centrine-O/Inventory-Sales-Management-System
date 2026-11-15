@@ -255,6 +255,11 @@ function migrate(db: DB) {
   if (!productCols.includes("supplier_id")) {
     db.exec("ALTER TABLE products ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)");
   }
+  if (!productCols.includes("barcode")) {
+    db.exec("ALTER TABLE products ADD COLUMN barcode TEXT");
+  }
+  // Barcodes are optional but must be unique when present.
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode) WHERE barcode IS NOT NULL");
   const customerCols = (db.prepare("PRAGMA table_info(customers)").all() as { name: string }[]).map((c) => c.name);
   if (!customerCols.includes("credit_limit_cents")) {
     db.exec("ALTER TABLE customers ADD COLUMN credit_limit_cents INTEGER NOT NULL DEFAULT 0 CHECK (credit_limit_cents >= 0)");

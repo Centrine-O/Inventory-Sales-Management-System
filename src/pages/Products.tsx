@@ -45,7 +45,11 @@ const Products = () => {
     const q = search.trim().toLowerCase();
     return all.filter(
       (p) =>
-        (!q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.category.toLowerCase().includes(q)) &&
+        (!q ||
+          p.name.toLowerCase().includes(q) ||
+          p.sku.toLowerCase().includes(q) ||
+          p.category.toLowerCase().includes(q) ||
+          p.barcode === search.trim()) &&
         (status === ALL || p.status === status) &&
         (category === ALL || p.category === category),
     );
@@ -96,7 +100,7 @@ const Products = () => {
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
-                    placeholder="Search name, SKU, category..."
+                    placeholder="Search name, SKU, barcode..."
                     value={search}
                     onChange={(e) => setParams(e.target.value ? { search: e.target.value } : {}, { replace: true })}
                     className="pl-10 sm:w-64"

@@ -79,7 +79,14 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     return;
   }
   if (err?.code === "SQLITE_CONSTRAINT_UNIQUE") {
-    res.status(409).json({ error: "A record with that value already exists" });
+    // e.g. "UNIQUE constraint failed: products.barcode"
+    const column = String(err.message).split(": ").pop() ?? "";
+    const friendly: Record<string, string> = {
+      "products.sku": "That SKU is already used by another product",
+      "products.barcode": "That barcode is already used by another product",
+      "users.email": "An account with that email already exists",
+    };
+    res.status(409).json({ error: friendly[column] ?? "A record with that value already exists" });
     return;
   }
   if (err?.type === "entity.parse.failed") {

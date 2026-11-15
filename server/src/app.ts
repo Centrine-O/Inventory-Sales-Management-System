@@ -28,8 +28,8 @@ function searchRouter(db: DB) {
     const like = `%${q}%`;
     res.json({
       products: db
-        .prepare("SELECT id, name, sku FROM products WHERE archived = 0 AND (name LIKE ? OR sku LIKE ?) LIMIT 5")
-        .all(like, like),
+        .prepare("SELECT id, name, sku FROM products WHERE archived = 0 AND (name LIKE ? OR sku LIKE ? OR barcode = ?) LIMIT 5")
+        .all(like, like, q),
       customers: db
         .prepare("SELECT id, name, email, phone FROM customers WHERE name LIKE ? OR email LIKE ? OR phone LIKE ? LIMIT 5")
         .all(like, like, like),

@@ -25,6 +25,7 @@ Demo accounts (created by the seed):
 ## Features
 
 - **Products** — create/edit, SKU uniqueness, cost & margin, reorder levels with derived *in stock / low / out* status, stock adjustments (restock, count corrections) with a full movement history. Products with sales history are archived rather than deleted.
+- **Barcode scanning** — products have an optional unique barcode (EAN/UPC); the New Sale dialog opens with a scan box focused, so any USB or Bluetooth scanner (which types the code and presses Enter) adds items instantly, one unit per scan. Codes match a barcode first, then the SKU, so unlabelled items can be scanned from a shelf label. On phones with a built-in barcode detector (Chrome on Android) a camera button scans with the phone camera. Barcodes can be scanned straight into the product form.
 - **Sales (POS)** — searchable cart, live stock checks, walk-in or named customer (add one inline), Cash / M-Pesa / Card / Bank Transfer, paid or pending (credit), discounts, VAT shown as included. Recording a sale deducts stock atomically; cancelling one (admin) restores it. Printable invoices, CSV export, date/status filters, optional large-transaction review flag.
 - **Suppliers & purchasing** (admin) — supplier directory with each product's preferred supplier; purchase orders that go draft → ordered → partly received → received (or cancelled); receiving goods raises stock, logs a restock movement against the PO, and updates unit cost as a weighted average. Reorder suggestions group low-stock items by supplier (net of quantities already on order) and turn into a draft PO in one click. Printable POs, overdue-delivery tracking.
 - **Credit & payments** — sell on credit to a named customer with an optional deposit; record instalments by Cash, M-Pesa (with transaction code), Card or Bank Transfer until the invoice flips to paid. Per-customer credit limits (admin-set) are enforced at checkout. Every payment is kept in a ledger shown on the invoice and the customer's statement; Reports shows who owes what, aged 0–30 / 31–60 / 61–90 / 90+ days.
@@ -96,6 +97,7 @@ All routes are under `/api` and require `Authorization: Bearer <token>` except l
 POST   /auth/login                 GET  /auth/me           POST /auth/password
 GET    /products[?search&status&category]   POST /products  PATCH/DELETE /products/:id
 GET    /products/:id (with movements)       POST /products/:id/stock     GET /products/categories
+GET    /products/lookup?code=  (barcode, then SKU)
 GET    /customers[?search&status]  POST /customers         GET/PATCH/DELETE /customers/:id
 GET    /sales[?search&status&from&to]       POST /sales     GET /sales/:id
 PATCH  /sales/:id/status {paid|cancelled}   GET  /sales/export.csv

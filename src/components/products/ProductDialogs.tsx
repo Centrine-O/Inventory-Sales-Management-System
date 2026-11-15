@@ -28,6 +28,11 @@ const productSchema = z.object({
   stock: z.coerce.number().int("Whole numbers only").min(0, "Stock cannot be negative"),
   reorderLevel: z.coerce.number().int("Whole numbers only").min(0),
   supplier: z.string(),
+  barcode: z
+    .string()
+    .trim()
+    .max(64)
+    .regex(/^[\x21-\x7E]*$/, "No spaces — scan it or type the digits exactly"),
 });
 type ProductForm = z.infer<typeof productSchema>;
 
@@ -53,8 +58,19 @@ export function ProductFormDialog({
     if (open) {
       reset(
         product
-          ? { ...product, supplier: product.supplierId ? String(product.supplierId) : NO_SUPPLIER }
-          : { name: "", sku: "", category: "", description: "", price: 0, cost: 0, stock: 0, reorderLevel: 5, supplier: NO_SUPPLIER },
+          ? { ...product, supplier: product.supplierId ? String(product.supplierId) : NO_SUPPLIER, barcode: product.barcode ?? "" }
+          : {
+              name: "",
+              sku: "",
+              category: "",
+              description: "",
+              price: 0,
+              cost: 0,
+              stock: 0,
+              reorderLevel: 5,
+              supplier: NO_SUPPLIER,
+              barcode: "",
+            },
       );
     }
   }, [open, product, reset]);
@@ -83,6 +99,19 @@ export function ProductFormDialog({
             <Label htmlFor="p-name">Name</Label>
             <Input id="p-name" {...register("name")} />
             <FieldError message={errors.name?.message} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="p-barcode">Barcode (optional)</Label>
+            <Input
+              id="p-barcode"
+              className="font-mono"
+              placeholder="Click here and scan the product's barcode"
+              autoComplete="off"
+              {...register("barcode")}
+              // A scanner ends with Enter; don't let it submit the form half-filled.
+              onKeyDown={(e) => e.key === "Enter" && e.preventDefault()}
+            />
+            <FieldError message={errors.barcode?.message} />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
@@ -300,7 +329,7 @@ export function ProductDetailDialog({ productId, onOpenChange }: { productId: nu
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{p?.name ?? "Product"}</DialogTitle>
-          <DialogDescription>{p && `${p.sku} · ${p.category}`}</DialogDescription>
+          <DialogDescription>{p && [p.sku, p.barcode, p.category].filter(Boolean).join(" · ")}</DialogDescription>
         </DialogHeader>
         {isLoading || !p ? (
           <Skeleton className="h-40 w-full" />

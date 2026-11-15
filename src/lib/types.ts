@@ -25,6 +25,7 @@ export interface Product {
   stock: number;
   reorderLevel: number;
   supplierId: number | null;
+  barcode: string | null;
   status: StockStatus;
   archived: boolean;
   createdAt: string;

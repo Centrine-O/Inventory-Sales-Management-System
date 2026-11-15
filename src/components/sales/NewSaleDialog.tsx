@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { Check, ChevronsUpDown, Loader2, Minus, Plus, Trash2, UserPlus } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, ChevronsUpDown, Loader2, Minus, Plus, ScanBarcode, Trash2, UserPlus } from "lucide-react";
+import { CameraScanButton } from "./CameraScanner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -32,7 +33,7 @@ export function NewSaleDialog({
   onOpenChange: (o: boolean) => void;
   onCreated?: (sale: SaleDetail) => void;
 }) {
-  const { data: products = [] } = useProducts();
+  const { data: products = [], isLoading: productsLoading } = useProducts();
   const { data: customers = [] } = useCustomers({ status: "active" });
   const { data: settings } = useSettings();
   const create = useCreateSale();
@@ -46,6 +47,10 @@ export function NewSaleDialog({
   const [discount, setDiscount] = useState("");
   const [deposit, setDeposit] = useState("");
   const [notes, setNotes] = useState("");
+  const [scan, setScan] = useState("");
+  const [scanMsg, setScanMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [flashId, setFlashId] = useState<number | null>(null);
+  const scanRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (open) {
@@ -56,8 +61,16 @@ export function NewSaleDialog({
       setDiscount("");
       setDeposit("");
       setNotes("");
+      setScan("");
+      setScanMsg(null);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (flashId === null) return;
+    const t = setTimeout(() => setFlashId(null), 900);
+    return () => clearTimeout(t);
+  }, [flashId]);
 
   // Keep cart lines in sync with the latest stock figures.
   const stockById = useMemo(() => new Map(products.map((p) => [p.id, p.stock])), [products]);
@@ -71,6 +84,34 @@ export function NewSaleDialog({
       return [...prev, { product: p, quantity: 1 }];
     });
     setPickerOpen(false);
+  };
+
+  /**
+   * Handle a scanned or typed code. USB/Bluetooth scanners "type" the code and press Enter.
+   * Matches a barcode exactly, then a SKU (case-insensitive), and adds one unit per scan.
+   */
+  const handleCode = (raw: string) => {
+    const code = raw.trim();
+    setScan("");
+    scanRef.current?.focus();
+    if (!code) return;
+    if (productsLoading) {
+      setScanMsg({ ok: false, text: "Products are still loading — scan again in a moment." });
+      return;
+    }
+    const p = products.find((x) => x.barcode === code) ?? products.find((x) => x.sku.toLowerCase() === code.toLowerCase());
+    if (!p) {
+      setScanMsg({ ok: false, text: `No product with barcode or SKU “${code}”.` });
+      return;
+    }
+    const inCart = lines.find((l) => l.product.id === p.id)?.quantity ?? 0;
+    if (p.stock <= inCart) {
+      setScanMsg({ ok: false, text: p.stock <= 0 ? `${p.name} is out of stock.` : `Only ${p.stock} ${p.name} in stock — all in the cart.` });
+      return;
+    }
+    addProduct(p);
+    setFlashId(p.id);
+    setScanMsg({ ok: true, text: `Added ${p.name}${inCart > 0 ? ` (now ${inCart + 1})` : ""}` });
   };
 
   const setQty = (id: number, qty: number) =>
@@ -119,17 +160,57 @@ export function NewSaleDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-3xl">
+        <DialogContent
+          className="max-h-[92vh] overflow-y-auto sm:max-w-3xl"
+          onOpenAutoFocus={(e) => {
+            // Ready for the scanner the moment the dialog opens.
+            e.preventDefault();
+            scanRef.current?.focus();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>New sale</DialogTitle>
             <DialogDescription>Add products, choose the customer and payment, then record the sale.</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-5">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleCode(scan);
+              }}
+              className="space-y-1.5"
+            >
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <ScanBarcode className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    ref={scanRef}
+                    id="scan-code"
+                    value={scan}
+                    onChange={(e) => {
+                      setScan(e.target.value);
+                      if (scanMsg) setScanMsg(null);
+                    }}
+                    placeholder="Scan a barcode, or type a barcode / SKU and press Enter"
+                    className="pl-10"
+                    autoComplete="off"
+                    aria-label="Scan barcode"
+                  />
+                </div>
+                <CameraScanButton onDetected={handleCode} />
+              </div>
+              {scanMsg && (
+                <p role="status" className={cn("text-sm", scanMsg.ok ? "text-accent" : "text-destructive")}>
+                  {scanMsg.text}
+                </p>
+              )}
+            </form>
+
             <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
               <PopoverTrigger asChild>
                 <Button variant="outline" className="w-full justify-between font-normal text-muted-foreground">
-                  Search products by name or SKU to add...
+                  Or search products by name...
                   <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
                 </Button>
               </PopoverTrigger>
@@ -142,7 +223,7 @@ export function NewSaleDialog({
                       {products.map((p) => (
                         <CommandItem
                           key={p.id}
-                          value={`${p.name} ${p.sku}`}
+                          value={`${p.name} ${p.sku} ${p.barcode ?? ""}`}
                           disabled={p.stock <= 0}
                           onSelect={() => addProduct(p)}
                           className="flex justify-between gap-4"
@@ -173,7 +254,10 @@ export function NewSaleDialog({
                     const available = stockById.get(l.product.id) ?? 0;
                     const over = l.quantity > available;
                     return (
-                      <li key={l.product.id} className="flex flex-wrap items-center gap-3 p-3">
+                      <li
+                        key={l.product.id}
+                        className={cn("flex flex-wrap items-center gap-3 p-3 transition-colors duration-700", flashId === l.product.id && "bg-accent/15")}
+                      >
                         <div className="min-w-0 flex-1">
                           <p className="truncate font-medium">{l.product.name}</p>
                           <p className={cn("text-xs", over ? "text-destructive" : "text-muted-foreground")}>

@@ -65,9 +65,15 @@ for (const [category, name, contact, email, phone, address] of [
 }
 
 const addProduct = db.prepare(
-  `INSERT INTO products (name, sku, category, price_cents, cost_cents, stock, reorder_level, supplier_id, created_at, updated_at)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  `INSERT INTO products (name, sku, category, price_cents, cost_cents, stock, reorder_level, supplier_id, barcode, created_at, updated_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 );
+/** EAN-13 with a valid check digit; 616 is the GS1 prefix for Kenya. */
+const ean13 = (n: number) => {
+  const body = `616${String(1000 + n).padStart(4, "0")}${String(10000 + n * 37).slice(-5)}`;
+  const sum = [...body].reduce((s, d, i) => s + Number(d) * (i % 2 === 0 ? 1 : 3), 0);
+  return body + ((10 - (sum % 10)) % 10);
+};
 const addPo = db.prepare(
   `INSERT INTO purchase_orders (po_number, supplier_id, status, expected_date, notes, user_id, created_at, ordered_at, received_at)
    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -84,10 +90,12 @@ const addMovement = db.prepare(
 interface P { id: number; name: string; sku: string; category: string; price: number; cost: number; stock: number; reorder: number }
 const catalog: P[] = [];
 const opened = sqlDate(daysAgo(75));
-for (const [name, sku, category, price, cost, reorder] of products) {
+for (const [idx, [name, sku, category, price, cost, reorder]] of products.entries()) {
   const stock = int(30, 90);
+  // A couple of items have no printed barcode; they're scanned by SKU from a shelf label instead.
+  const code = ["HC-020", "WM-004"].includes(sku) ? null : ean13(idx + 1);
   const id = Number(
-    addProduct.run(name, sku, category, toCents(price), toCents(cost), stock, reorder, supplierByCategory[category], opened, opened)
+    addProduct.run(name, sku, category, toCents(price), toCents(cost), stock, reorder, supplierByCategory[category], code, opened, opened)
       .lastInsertRowid,
   );
   addMovement.run(id, stock, "initial", "Opening stock", adminId, opened);
