@@ -183,9 +183,34 @@ export interface Dashboard {
   lowStock: Product[];
 }
 
+export interface Expense {
+  id: number;
+  date: string;
+  category: string;
+  payee: string;
+  description: string;
+  amount: number;
+  paymentMethod: PaymentMethod;
+  reference: string;
+  recordedBy: string;
+  createdAt: string;
+}
+
+export interface ProfitAndLoss {
+  revenue: number;
+  costOfGoods: number;
+  grossProfit: number;
+  expenses: number;
+  expensesChangePct: number | null;
+  expensesByCategory: { category: string; count: number; amount: number }[];
+  netProfit: number;
+  netMarginPct: number | null;
+}
+
 export interface Report {
   from: string;
   to: string;
+  profitAndLoss: ProfitAndLoss;
   summary: {
     grossSales: number;
     returns: number;

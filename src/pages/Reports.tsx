@@ -1,29 +1,20 @@
 import { useState } from "react";
-import { endOfMonth, startOfMonth, startOfYear, subDays, subMonths } from "date-fns";
 import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Download, TrendingUp, Wallet, Receipt, PiggyBank, Clock, Boxes, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { MetricCard, PageHeader } from "@/components/common";
 import { DailyRevenueArea, RankedBars } from "@/components/charts";
 import { useReceivables, useReport } from "@/hooks/api";
+import type { ProfitAndLoss } from "@/lib/types";
+import { DateRangePicker, useDateRange } from "@/components/DateRangePicker";
 import { Link } from "react-router-dom";
 import { api, errorMessage, qs } from "@/lib/api";
-import { ksh, kshCompact, pct, ymd } from "@/lib/format";
+import { ksh, kshCompact, pct } from "@/lib/format";
 
-const PRESETS: Record<string, () => [Date, Date]> = {
-  "7d": () => [subDays(new Date(), 6), new Date()],
-  "30d": () => [subDays(new Date(), 29), new Date()],
-  "90d": () => [subDays(new Date(), 89), new Date()],
-  month: () => [startOfMonth(new Date()), new Date()],
-  lastMonth: () => [startOfMonth(subMonths(new Date(), 1)), endOfMonth(subMonths(new Date(), 1))],
-  ytd: () => [startOfYear(new Date()), new Date()],
-};
 
 const ChangeHint = ({ value }: { value: number | null }) => {
   const label = pct(value);
@@ -34,6 +25,56 @@ const ChangeHint = ({ value }: { value: number | null }) => {
     </span>
   );
 };
+
+function ProfitAndLossCard({ pl }: { pl: ProfitAndLoss }) {
+  const line = (label: string, value: number, opts: { bold?: boolean; negative?: boolean; indent?: boolean; muted?: boolean } = {}) => (
+    <div
+      className={`flex justify-between gap-4 py-1.5 ${opts.indent ? "pl-4 text-muted-foreground" : ""} ${opts.bold ? "font-semibold" : ""} ${opts.muted ? "text-muted-foreground" : ""}`}
+    >
+      <span>{label}</span>
+      <span className="whitespace-nowrap tabular-nums">{opts.negative ? `−${ksh(value)}` : ksh(value)}</span>
+    </div>
+  );
+  const loss = pl.netProfit < 0;
+  return (
+    <Card className="shadow-medium">
+      <CardHeader className="flex flex-row items-start justify-between space-y-0">
+        <div>
+          <CardTitle>Profit &amp; loss</CardTitle>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Revenue after returns, less the cost of goods sold and running expenses.{" "}
+            <Link to="/app/expenses" className="text-primary hover:underline">
+              Manage expenses
+            </Link>
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-xs text-muted-foreground">{loss ? "Net loss" : "Net profit"}</p>
+          <p className={`text-2xl font-bold ${loss ? "text-destructive" : "text-accent"}`}>{ksh(pl.netProfit)}</p>
+          {pl.netMarginPct !== null && <p className="text-xs text-muted-foreground">{pl.netMarginPct.toFixed(1)}% net margin</p>}
+        </div>
+      </CardHeader>
+      <CardContent className="text-sm">
+        <div className="max-w-xl divide-y">
+          <div>
+            {line("Revenue", pl.revenue)}
+            {line("Cost of goods sold", pl.costOfGoods, { negative: true, muted: true })}
+          </div>
+          <div>{line("Gross profit", pl.grossProfit, { bold: true })}</div>
+          <div>
+            {pl.expensesByCategory.length === 0 ? (
+              <p className="py-1.5 text-muted-foreground">No expenses recorded in this period.</p>
+            ) : (
+              pl.expensesByCategory.map((c) => <div key={c.category}>{line(c.category, c.amount, { indent: true, negative: true })}</div>)
+            )}
+            {line("Operating expenses", pl.expenses, { negative: true })}
+          </div>
+          <div className={loss ? "text-destructive" : ""}>{line(loss ? "Net loss" : "Net profit", pl.netProfit, { bold: true })}</div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 function ReceivablesCard() {
   const { data, isLoading } = useReceivables();
@@ -112,20 +153,10 @@ function ReceivablesCard() {
 }
 
 const Reports = () => {
-  const [preset, setPreset] = useState("30d");
-  const [from, setFrom] = useState(() => ymd(PRESETS["30d"]()[0]));
-  const [to, setTo] = useState(() => ymd(new Date()));
+  const range = useDateRange("30d");
+  const { from, to } = range;
   const [exporting, setExporting] = useState(false);
   const { data, isLoading, isFetching, error } = useReport(from, to);
-
-  const applyPreset = (key: string) => {
-    setPreset(key);
-    if (PRESETS[key]) {
-      const [f, t] = PRESETS[key]();
-      setFrom(ymd(f));
-      setTo(ymd(t));
-    }
-  };
 
   const exportCsv = async () => {
     setExporting(true);
@@ -156,45 +187,7 @@ const Reports = () => {
         />
 
         <div className="flex flex-wrap items-center gap-2">
-          <Select value={preset} onValueChange={applyPreset}>
-            <SelectTrigger className="w-44">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="7d">Last 7 days</SelectItem>
-              <SelectItem value="30d">Last 30 days</SelectItem>
-              <SelectItem value="90d">Last 90 days</SelectItem>
-              <SelectItem value="month">This month</SelectItem>
-              <SelectItem value="lastMonth">Last month</SelectItem>
-              <SelectItem value="ytd">Year to date</SelectItem>
-              <SelectItem value="custom">Custom range</SelectItem>
-            </SelectContent>
-          </Select>
-          <Input
-            type="date"
-            className="w-40"
-            value={from}
-            max={to}
-            aria-label="From date"
-            onChange={(e) => {
-              if (!e.target.value) return;
-              setFrom(e.target.value);
-              setPreset("custom");
-            }}
-          />
-          <span className="text-muted-foreground">to</span>
-          <Input
-            type="date"
-            className="w-40"
-            value={to}
-            min={from}
-            aria-label="To date"
-            onChange={(e) => {
-              if (!e.target.value) return;
-              setTo(e.target.value);
-              setPreset("custom");
-            }}
-          />
+          <DateRangePicker range={range} />
           {isFetching && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
         </div>
 
@@ -253,6 +246,8 @@ const Reports = () => {
             }
           />
         </div>
+
+        {data && <ProfitAndLossCard pl={data.profitAndLoss} />}
 
         <Card className="shadow-medium">
           <CardHeader>

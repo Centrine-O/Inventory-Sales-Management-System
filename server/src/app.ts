@@ -15,6 +15,7 @@ import { reportsRouter } from "./routes/reports.js";
 import { suppliersRouter } from "./routes/suppliers.js";
 import { purchaseOrdersRouter } from "./routes/purchaseOrders.js";
 import { returnsRouter } from "./routes/returns.js";
+import { expensesRouter } from "./routes/expenses.js";
 
 function searchRouter(db: DB) {
   const r = Router();
@@ -62,6 +63,7 @@ export function createApp(db: DB, opts: { staticDir?: string } = {}) {
   api.use("/customers", customersRouter(db));
   api.use("/sales", salesRouter(db));
   api.use("/returns", returnsRouter(db));
+  api.use("/expenses", requireRole("admin"), expensesRouter(db));
   api.use("/settings", settingsRouter(db));
   api.use("/dashboard", dashboardRouter(db));
   api.use("/reports", requireRole("admin"), reportsRouter(db));

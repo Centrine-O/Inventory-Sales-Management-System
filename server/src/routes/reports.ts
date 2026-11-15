@@ -4,6 +4,7 @@ import { fromCents, type DB } from "../db.js";
 import { addDays, daysBetween, spanDays, ymd } from "../dates.js";
 import { HttpError } from "../http.js";
 import { toCsv } from "../mappers.js";
+import { expensesInRange } from "./expenses.js";
 
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "must be YYYY-MM-DD");
 const rangeSchema = z.object({ from: dateStr.optional(), to: dateStr.optional() });
@@ -158,9 +159,25 @@ export function buildReport(db: DB, from: string, to: string) {
 
   const pct = (now: number, before: number) => (before > 0 ? ((now - before) / before) * 100 : null);
 
+  // Profit & loss: gross profit less operating expenses for the same period.
+  const expenses = expensesInRange(db, from, to);
+  const prevExpenses = expensesInRange(db, addDays(from, -span), addDays(from, -1));
+  const grossProfit = cur.revenue - cogs;
+  const netProfit = grossProfit - expenses.total;
+
   return {
     from,
     to,
+    profitAndLoss: {
+      revenue: fromCents(cur.revenue),
+      costOfGoods: fromCents(cogs),
+      grossProfit: fromCents(grossProfit),
+      expenses: fromCents(expenses.total),
+      expensesChangePct: pct(expenses.total, prevExpenses.total),
+      expensesByCategory: expenses.byCategory.map((c) => ({ category: c.category, count: c.n, amount: fromCents(c.cents) })),
+      netProfit: fromCents(netProfit),
+      netMarginPct: cur.revenue > 0 ? (netProfit / cur.revenue) * 100 : null,
+    },
     summary: {
       revenue: fromCents(cur.revenue),
       revenueChangePct: pct(cur.revenue, prev.revenue),
@@ -296,6 +313,9 @@ export function reportsRouter(db: DB) {
       ["VAT included", s.tax.toFixed(2)],
       ["Discounts", s.discounts.toFixed(2)],
       ["Gross profit", s.grossProfit.toFixed(2)],
+      ["Operating expenses", rep.profitAndLoss.expenses.toFixed(2)],
+      ...rep.profitAndLoss.expensesByCategory.map((c) => [`  ${c.category}`, c.amount.toFixed(2)]),
+      ["Net profit", rep.profitAndLoss.netProfit.toFixed(2)],
       [],
       ["Date", "Orders", "Revenue"],
       ...rep.daily.map((d) => [d.date, d.orders, d.revenue.toFixed(2)]),

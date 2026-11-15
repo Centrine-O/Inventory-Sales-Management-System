@@ -94,7 +94,7 @@ export function RankedBars({
       <BarChart data={data} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }} barCategoryGap="30%">
         <CartesianGrid horizontal={false} stroke={GRID} strokeDasharray="3 3" />
         <XAxis type="number" tickFormatter={(v) => kshCompact(v).replace("KSh ", "")} tick={AXIS} axisLine={false} tickLine={false} />
-        <YAxis type="category" dataKey="name" tick={AXIS} axisLine={false} tickLine={false} width={110} />
+        <YAxis type="category" dataKey="name" tick={AXIS} axisLine={false} tickLine={false} width={150} />
         <Tooltip cursor={{ fill: "hsl(var(--muted))", opacity: 0.6 }} content={<ChartTooltip />} />
         <Bar dataKey="revenue" fill={PRIMARY} radius={[0, 4, 4, 0]} maxBarSize={22} />
       </BarChart>

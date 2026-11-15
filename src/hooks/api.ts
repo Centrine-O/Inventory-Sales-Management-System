@@ -5,6 +5,7 @@ import type {
   Customer,
   CustomerDetail,
   Dashboard,
+  Expense,
   ManagedUser,
   PaymentMethod,
   Product,
@@ -444,6 +445,53 @@ export function useDeletePurchaseOrder() {
     onSuccess: (_r, po) => {
       invalidate([["purchase-orders"]]);
       toast.success(`${po.poNumber} deleted`);
+    },
+    onError,
+  });
+}
+
+// ---------- Expenses ----------
+
+export const useExpenses = (filters: { from?: string; to?: string; category?: string; search?: string } = {}) =>
+  useQuery({
+    queryKey: ["expenses", filters],
+    queryFn: () => api.get<Expense[]>(`/expenses${qs(filters)}`),
+    placeholderData: keepPreviousData,
+  });
+
+export const useExpenseCategories = (enabled = true) =>
+  useQuery({ queryKey: ["expenses", "categories"], queryFn: () => api.get<string[]>("/expenses/categories"), enabled });
+
+export interface ExpenseInput {
+  date: string;
+  category: string;
+  payee: string;
+  description: string;
+  amount: number;
+  paymentMethod: PaymentMethod;
+  reference: string;
+}
+
+export function useSaveExpense() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, ...body }: ExpenseInput & { id?: number }) =>
+      id ? api.patch<Expense>(`/expenses/${id}`, body) : api.post<Expense>("/expenses", body),
+    onSuccess: (e, vars) => {
+      invalidate([["expenses"], ["reports"]]);
+      toast.success(vars.id ? "Expense updated" : `${e.category} expense of KSh ${e.amount.toLocaleString()} recorded`);
+    },
+    onError,
+  });
+}
+
+export function useDeleteExpense() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (e: Expense) => api.delete(`/expenses/${e.id}`),
+    onSuccess: () => {
+      invalidate([["expenses"], ["reports"]]);
+      toast.success("Expense deleted");
     },
     onError,
   });

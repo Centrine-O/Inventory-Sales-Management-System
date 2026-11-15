@@ -154,6 +154,20 @@ CREATE TABLE IF NOT EXISTS purchase_order_items (
 );
 CREATE INDEX IF NOT EXISTS idx_po_items_po ON purchase_order_items(po_id);
 
+CREATE TABLE IF NOT EXISTS expenses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  expense_date TEXT NOT NULL,
+  category TEXT NOT NULL,
+  payee TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+  payment_method TEXT NOT NULL CHECK (payment_method IN ('Cash', 'Card', 'M-Pesa', 'Bank Transfer')),
+  reference TEXT NOT NULL DEFAULT '',
+  user_id INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL

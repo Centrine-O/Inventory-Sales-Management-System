@@ -130,6 +130,7 @@ const mpesaCode = () => "Q" + Array.from({ length: 9 }, () => "ABCDEFGHJKLMNPQRS
 const methods = ["Cash", "M-Pesa", "M-Pesa", "M-Pesa", "Card", "Bank Transfer"];
 let invoice = 0;
 let returnCount = 0;
+let expenseCount = 0;
 
 db.transaction(() => {
   for (let day = 60; day >= 0; day--) {
@@ -244,6 +245,38 @@ db.transaction(() => {
     }
   }
 
+  // Operating expenses for the last ~2.5 months.
+  const addExpense = db.prepare(
+    `INSERT INTO expenses (expense_date, category, payee, description, amount_cents, payment_method, reference, user_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const ymdLocal = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const expense = (d: Date, category: string, payee: string, description: string, amount: number, method: string, ref = "") => {
+    if (d > now) return;
+    addExpense.run(ymdLocal(d), category, payee, description, toCents(amount), method, ref, adminId, sqlDate(d));
+    expenseCount++;
+  };
+  for (let m = 2; m >= 0; m--) {
+    const first = new Date(now.getFullYear(), now.getMonth() - m, 1, 10);
+    const label = first.toLocaleString("en-KE", { month: "long" });
+    expense(first, "Rent", "Westgate Properties Ltd", `${label} shop rent`, 45000, "Bank Transfer", `EFT-${int(100000, 999999)}`);
+    expense(new Date(first.getFullYear(), first.getMonth(), 5, 11), "Utilities", "Kenya Power", `${label} electricity (prepaid tokens)`, int(60, 95) * 100, "M-Pesa", mpesaCode());
+    expense(new Date(first.getFullYear(), first.getMonth(), 6, 11), "Utilities", "Nairobi Water", `${label} water bill`, int(12, 20) * 100, "M-Pesa", mpesaCode());
+    expense(new Date(first.getFullYear(), first.getMonth(), 7, 11), "Utilities", "Safaricom Home Fibre", `${label} internet`, 3500, "M-Pesa", mpesaCode());
+    const payday = new Date(first.getFullYear(), first.getMonth() + 1, 0, 16);
+    expense(payday, "Salaries & wages", "Mary Achieng", `${label} salary — cashier`, 28000, "M-Pesa", mpesaCode());
+    expense(payday, "Salaries & wages", "Joseph Mutiso", `${label} salary — store assistant`, 22000, "M-Pesa", mpesaCode());
+    expense(new Date(first.getFullYear(), first.getMonth(), 15, 12), "Licences & fees", "Nairobi City County", "Monthly business permit instalment", 2500, "M-Pesa", mpesaCode());
+  }
+  for (let day = 70; day >= 0; day -= 7) {
+    expense(daysAgo(day, 15), "Transport & delivery", "Boda boda deliveries", "Weekly customer deliveries", int(15, 40) * 100, "Cash");
+    expense(daysAgo(day, 18), "Bank & M-Pesa charges", "Safaricom", "Till & transfer charges", int(4, 12) * 100, "M-Pesa");
+  }
+  expense(daysAgo(40, 13), "Marketing", "Mwananchi Prints", "Flyers and posters", 6500, "Cash");
+  expense(daysAgo(18, 14), "Repairs & maintenance", "Fundi John", "Fix shop shutter", 3800, "Cash");
+  expense(daysAgo(9, 10), "Office & cleaning supplies", "Naivas Supermarket", "Cleaning supplies and tea", 2150, "Card");
+
   // Leave a few items low or out of stock so alerts have something to show.
   const drain = (sku: string, left: number) => {
     const p = catalog.find((c) => c.sku === sku)!;
@@ -291,7 +324,7 @@ db.transaction(() => {
 
 console.log(
   `Seeded ${catalog.length} products, ${Object.keys(supplierByCategory).length} suppliers, ${poCount} purchase orders, ` +
-    `${returnCount} returns, ` +
+    `${returnCount} returns, ${expenseCount} expenses, ` +
     `${customerIds.length} customers, ${invoice} sales into ${dbFile}`,
 );
 console.log("Sign in with admin@stockflow.local / admin1234 or cashier@stockflow.local / cashier1234");

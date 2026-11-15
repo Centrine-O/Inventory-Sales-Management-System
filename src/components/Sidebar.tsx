@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { BarChart3, Package, Users, ShoppingCart, FileText, Settings, ChevronDown, Truck, ClipboardList } from "lucide-react";
+import { BarChart3, Package, Users, ShoppingCart, FileText, Settings, ChevronDown, Truck, ClipboardList, Banknote } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
@@ -12,6 +12,7 @@ const navigation = [
   { name: "Sales", href: "/app/sales", icon: ShoppingCart },
   { name: "Purchasing", href: "/app/purchase-orders", icon: ClipboardList, adminOnly: true },
   { name: "Suppliers", href: "/app/suppliers", icon: Truck, adminOnly: true },
+  { name: "Expenses", href: "/app/expenses", icon: Banknote, adminOnly: true },
   { name: "Reports", href: "/app/reports", icon: FileText, adminOnly: true },
   { name: "Settings", href: "/app/settings", icon: Settings },
 ];
