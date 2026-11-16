@@ -1,7 +1,11 @@
-import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, errorMessage, qs } from "@/lib/api";
 import type {
+  AuditEntity,
+  AuditFacets,
+  AuditPage,
+  AuditSummary,
   Customer,
   CustomerDetail,
   Dashboard,
@@ -28,6 +32,7 @@ import type {
 
 /** Everything that changes when stock or sales change. */
 const INVENTORY_KEYS = [
+  ["audit"],
   ["products"],
   ["product"],
   ["sales"],
@@ -558,3 +563,38 @@ export function useCloseShift() {
     onError,
   });
 }
+
+// ---------- Audit log ----------
+
+export interface AuditFilters {
+  from?: string;
+  to?: string;
+  userId?: number;
+  entity?: AuditEntity;
+  action?: string;
+  search?: string;
+  attention?: boolean;
+}
+
+export const auditQuery = (f: AuditFilters) => ({ ...f, attention: f.attention ? "true" : undefined });
+
+export const useAuditLog = (filters: AuditFilters) =>
+  useInfiniteQuery({
+    queryKey: ["audit", "log", filters],
+    queryFn: ({ pageParam }) => api.get<AuditPage>(`/audit${qs({ ...auditQuery(filters), before: pageParam, limit: 50 })}`),
+    initialPageParam: undefined as number | undefined,
+    getNextPageParam: (last) => last.nextBefore ?? undefined,
+    placeholderData: keepPreviousData,
+    // Always show the latest activity when the page opens.
+    staleTime: 0,
+  });
+
+export const useAuditFacets = () => useQuery({ queryKey: ["audit", "facets"], queryFn: () => api.get<AuditFacets>("/audit/facets") });
+
+export const useAuditSummary = (filters: AuditFilters) =>
+  useQuery({
+    queryKey: ["audit", "summary", filters],
+    queryFn: () => api.get<AuditSummary>(`/audit/summary${qs(auditQuery(filters))}`),
+    placeholderData: keepPreviousData,
+    staleTime: 0,
+  });

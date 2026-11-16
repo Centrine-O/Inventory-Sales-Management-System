@@ -3,6 +3,7 @@ import { z } from "zod";
 import { toCents, type DB } from "../db.js";
 import { HttpError, currentUser, idParam, requireRole } from "../http.js";
 import { iso, mapProduct, type ProductRow } from "../mappers.js";
+import { audit, describeChanges, diff } from "../audit.js";
 
 const money = z.coerce.number().min(0).max(100_000_000);
 /** Printable barcode characters only; blank means "no barcode". */
@@ -172,6 +173,12 @@ export function productsRouter(db: DB) {
           "INSERT INTO stock_movements (product_id, change, reason, reference, user_id) VALUES (?, ?, 'initial', 'Opening stock', ?)",
         ).run(productId, body.stock, me.id);
       }
+      audit(db, req, {
+        action: "created",
+        entity: "product",
+        entityId: productId,
+        summary: `Added product ${body.name} (${body.sku}) at KSh ${body.price.toLocaleString("en-KE")}, opening stock ${body.stock}`,
+      });
       return productId;
     })();
     res.status(201).json(mapProduct(getProduct(id)));
@@ -182,10 +189,19 @@ export function productsRouter(db: DB) {
     const body = updateSchema.parse(req.body);
     const p = getProduct(id);
     checkSupplier(body.supplierId);
-    db.prepare(
+    const supplierName = (sid: number | null) =>
+      sid ? ((db.prepare("SELECT name FROM suppliers WHERE id = ?").get(sid) as { name: string } | undefined)?.name ?? `#${sid}`) : null;
+    const before = mapProduct(p);
+    const changes = diff(
+      { ...before, supplierId: supplierName(p.supplier_id) },
+      { ...body, supplierId: body.supplierId === undefined ? undefined : supplierName(body.supplierId) },
+    );
+    const update = db.prepare(
       `UPDATE products SET name = ?, sku = ?, category = ?, description = ?, price_cents = ?, cost_cents = ?,
          reorder_level = ?, supplier_id = ?, barcode = ?, updated_at = datetime('now') WHERE id = ?`,
-    ).run(
+    );
+    db.transaction(() => {
+      update.run(
       body.name ?? p.name,
       body.sku ?? p.sku,
       body.category ?? p.category,
@@ -196,7 +212,18 @@ export function productsRouter(db: DB) {
       body.supplierId === undefined ? p.supplier_id : body.supplierId,
       body.barcode === undefined ? p.barcode : body.barcode,
       id,
-    );
+      );
+      if (Object.keys(changes).length) {
+        const priceChange = "price" in changes || "cost" in changes;
+        audit(db, req, {
+          action: priceChange ? "price_changed" : "updated",
+          entity: "product",
+          entityId: id,
+          summary: `${p.name}: ${describeChanges(changes, ["description"])}${"description" in changes ? (Object.keys(changes).length > 1 ? ", description edited" : "description edited") : ""}`,
+          details: { changes },
+        });
+      }
+    })();
     res.json(mapProduct(getProduct(id)));
   });
 
@@ -217,6 +244,14 @@ export function productsRouter(db: DB) {
       db.prepare(
         "INSERT INTO stock_movements (product_id, change, reason, reference, user_id) VALUES (?, ?, ?, ?, ?)",
       ).run(id, body.change, body.reason, body.note, me.id);
+      const verb = body.reason === "restock" ? "Restocked" : "Adjusted stock of";
+      audit(db, req, {
+        action: "stock_adjusted",
+        entity: "product",
+        entityId: id,
+        summary: `${verb} ${p.name} by ${body.change > 0 ? "+" : ""}${body.change} (${p.stock} → ${p.stock + body.change})${body.note ? ` · ${body.note}` : ""}`,
+        details: { reason: body.reason, change: body.change, before: p.stock, after: p.stock + body.change, note: body.note },
+      });
     })();
     res.json(mapProduct(getProduct(id)));
   });
@@ -224,26 +259,33 @@ export function productsRouter(db: DB) {
   /** Products referenced by past sales or purchase orders are archived (kept for history); unused ones are removed. */
   r.delete("/:id", requireRole("admin"), (req, res) => {
     const id = idParam(req);
-    getProduct(id);
+    const p = getProduct(id);
     const used =
       db.prepare("SELECT 1 FROM sale_items WHERE product_id = ? LIMIT 1").get(id) ??
       db.prepare("SELECT 1 FROM purchase_order_items WHERE product_id = ? LIMIT 1").get(id);
     if (used) {
-      db.prepare("UPDATE products SET archived = 1, updated_at = datetime('now') WHERE id = ?").run(id);
+      db.transaction(() => {
+        db.prepare("UPDATE products SET archived = 1, updated_at = datetime('now') WHERE id = ?").run(id);
+        audit(db, req, { action: "archived", entity: "product", entityId: id, summary: `Archived ${p.name} (${p.sku}), ${p.stock} in stock` });
+      })();
       res.json({ archived: true });
       return;
     }
     db.transaction(() => {
       db.prepare("DELETE FROM stock_movements WHERE product_id = ?").run(id);
       db.prepare("DELETE FROM products WHERE id = ?").run(id);
+      audit(db, req, { action: "deleted", entity: "product", entityId: id, summary: `Deleted ${p.name} (${p.sku})` });
     })();
     res.json({ archived: false });
   });
 
   r.post("/:id/restore", requireRole("admin"), (req, res) => {
     const id = idParam(req);
-    getProduct(id);
-    db.prepare("UPDATE products SET archived = 0, updated_at = datetime('now') WHERE id = ?").run(id);
+    const p = getProduct(id);
+    db.transaction(() => {
+      db.prepare("UPDATE products SET archived = 0, updated_at = datetime('now') WHERE id = ?").run(id);
+      audit(db, req, { action: "restored", entity: "product", entityId: id, summary: `Restored ${p.name} (${p.sku})` });
+    })();
     res.json(mapProduct(getProduct(id)));
   });
 

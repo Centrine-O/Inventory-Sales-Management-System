@@ -23,6 +23,7 @@ const Suppliers = lazy(() => import("./pages/Suppliers"));
 const PurchaseOrders = lazy(() => import("./pages/PurchaseOrders"));
 const Expenses = lazy(() => import("./pages/Expenses"));
 const Till = lazy(() => import("./pages/Till"));
+const AuditLog = lazy(() => import("./pages/AuditLog"));
 
 const PageFallback = () => (
   <div className="flex min-h-screen items-center justify-center">
@@ -64,6 +65,7 @@ const App = () => (
                 <Route path="/app/suppliers" element={<Suppliers />} />
                 <Route path="/app/purchase-orders" element={<PurchaseOrders />} />
                 <Route path="/app/expenses" element={<Expenses />} />
+                <Route path="/app/activity" element={<AuditLog />} />
               </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>

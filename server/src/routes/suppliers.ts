@@ -4,6 +4,7 @@ import { fromCents, type DB } from "../db.js";
 import { HttpError, idParam } from "../http.js";
 import { iso, mapProduct, type ProductRow } from "../mappers.js";
 import { PO_SELECT, mapPurchaseOrder, type PurchaseOrderRow } from "./purchaseOrders.js";
+import { audit, describeChanges, diff } from "../audit.js";
 
 interface SupplierRow {
   id: number;
@@ -98,21 +99,29 @@ export function suppliersRouter(db: DB) {
 
   r.post("/", (req, res) => {
     const b = createSchema.parse(req.body);
-    const info = db
-      .prepare(
-        "INSERT INTO suppliers (name, contact_name, email, phone, address, notes, active) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      )
-      .run(b.name, b.contactName, b.email, b.phone, b.address, b.notes, b.active ? 1 : 0);
-    res.status(201).json(mapSupplier(getSupplier(Number(info.lastInsertRowid))));
+    const id = db.transaction(() => {
+      const info = db
+        .prepare(
+          "INSERT INTO suppliers (name, contact_name, email, phone, address, notes, active) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(b.name, b.contactName, b.email, b.phone, b.address, b.notes, b.active ? 1 : 0);
+      const newId = Number(info.lastInsertRowid);
+      audit(db, req, { action: "created", entity: "supplier", entityId: newId, summary: `Added supplier ${b.name}` });
+      return newId;
+    })();
+    res.status(201).json(mapSupplier(getSupplier(id)));
   });
 
   r.patch("/:id", (req, res) => {
     const id = idParam(req);
     const b = updateSchema.parse(req.body);
     const s = getSupplier(id);
-    db.prepare(
+    const changes = diff(mapSupplier(s), b);
+    const update = db.prepare(
       "UPDATE suppliers SET name = ?, contact_name = ?, email = ?, phone = ?, address = ?, notes = ?, active = ? WHERE id = ?",
-    ).run(
+    );
+    db.transaction(() => {
+      update.run(
       b.name ?? s.name,
       b.contactName ?? s.contact_name,
       b.email ?? s.email,
@@ -121,19 +130,30 @@ export function suppliersRouter(db: DB) {
       b.notes ?? s.notes,
       b.active === undefined ? s.active : b.active ? 1 : 0,
       id,
-    );
+      );
+      if (Object.keys(changes).length) {
+        audit(db, req, {
+          action: "updated",
+          entity: "supplier",
+          entityId: id,
+          summary: `${s.name}: ${describeChanges(changes, ["notes", "address"])}${"notes" in changes || "address" in changes ? `${Object.keys(changes).some((k) => k !== "notes" && k !== "address") ? ", " : ""}details edited` : ""}`,
+          details: { changes },
+        });
+      }
+    })();
     res.json(mapSupplier(getSupplier(id)));
   });
 
   r.delete("/:id", (req, res) => {
     const id = idParam(req);
-    getSupplier(id);
+    const s = getSupplier(id);
     if (db.prepare("SELECT 1 FROM purchase_orders WHERE supplier_id = ? LIMIT 1").get(id)) {
       throw new HttpError(409, "This supplier has purchase orders. Mark them inactive instead of deleting.");
     }
     db.transaction(() => {
       db.prepare("UPDATE products SET supplier_id = NULL WHERE supplier_id = ?").run(id);
       db.prepare("DELETE FROM suppliers WHERE id = ?").run(id);
+      audit(db, req, { action: "deleted", entity: "supplier", entityId: id, summary: `Deleted supplier ${s.name}` });
     })();
     res.status(204).end();
   });

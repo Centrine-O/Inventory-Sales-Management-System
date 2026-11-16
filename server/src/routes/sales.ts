@@ -4,6 +4,7 @@ import { fromCents, toCents, type DB } from "../db.js";
 import { HttpError, currentUser, idParam, requireRole } from "../http.js";
 import { getSettings } from "./settings.js";
 import { openShiftFor } from "./shifts.js";
+import { audit } from "../audit.js";
 import { SALE_SELECT, iso, mapSale, toCsv, type ProductRow, type SaleRow } from "../mappers.js";
 
 const PAYMENT_METHODS = ["Cash", "Card", "M-Pesa", "Bank Transfer"] as const;
@@ -335,6 +336,17 @@ export function salesRouter(db: DB) {
         decStock.run(l.quantity, l.p.id);
         movement.run(l.p.id, -l.quantity, invoiceNo, me.id);
       }
+      // Discounts are where money most often leaks, so each one is recorded.
+      if (discount > 0) {
+        const pct = Math.round((discount / subtotal) * 1000) / 10;
+        audit(db, req, {
+          action: "discount_given",
+          entity: "sale",
+          entityId: id,
+          summary: `${invoiceNo}: discount of KSh ${fromCents(discount).toLocaleString("en-KE")} (${pct}%) on KSh ${fromCents(subtotal).toLocaleString("en-KE")}`,
+          details: { subtotal: fromCents(subtotal), discount: fromCents(discount), percent: pct, total: fromCents(total) },
+        });
+      }
       return id;
     })();
 
@@ -372,6 +384,14 @@ export function salesRouter(db: DB) {
             "INSERT INTO stock_movements (product_id, change, reason, reference, user_id) VALUES (?, ?, 'sale_cancelled', ?, ?)",
           ).run(it.product_id, it.quantity, sale.invoice_no, me.id);
         }
+        const total = (db.prepare("SELECT total_cents FROM sales WHERE id = ?").get(id) as { total_cents: number }).total_cents;
+        audit(db, req, {
+          action: "cancelled",
+          entity: "sale",
+          entityId: id,
+          summary: `Cancelled ${sale.invoice_no} (KSh ${fromCents(total).toLocaleString("en-KE")}, was ${sale.status}); stock put back`,
+          details: { previousStatus: sale.status, total: fromCents(total) },
+        });
       }
       if (status === "paid") {
         if ((getSettings(db) as { requireShiftForSales?: boolean }).requireShiftForSales && !openShiftFor(db, me.id)) {
@@ -495,6 +515,19 @@ export function salesRouter(db: DB) {
       if (sale.status === "pending" && saleBalanceCents(db, id) === 0) {
         db.prepare("UPDATE sales SET status = 'paid' WHERE id = ?").run(id);
       }
+      const written = lines.filter((l) => !l.restock).reduce((n, l) => n + l.quantity, 0);
+      audit(db, req, {
+        action: "return_processed",
+        entity: "sale",
+        entityId: id,
+        summary:
+          `${returnNo} on ${sale.invoice_no}: ${lines.map((l) => `${l.quantity} × ${l.item.product_name}`).join(", ")} ` +
+          `worth KSh ${fromCents(value).toLocaleString("en-KE")}` +
+          (refund > 0 ? `, refunded KSh ${fromCents(refund).toLocaleString("en-KE")} by ${body.refundMethod}` : ", no refund") +
+          (written ? `, ${written} written off` : "") +
+          ` · ${body.reason}`,
+        details: { returnNo, value: fromCents(value), refund: fromCents(refund), refundMethod: refund > 0 ? body.refundMethod : null, reason: body.reason },
+      });
       return { returnNo, refund };
     })();
 

@@ -17,6 +17,7 @@ import { purchaseOrdersRouter } from "./routes/purchaseOrders.js";
 import { returnsRouter } from "./routes/returns.js";
 import { expensesRouter } from "./routes/expenses.js";
 import { shiftsRouter } from "./routes/shifts.js";
+import { auditRouter } from "./routes/audit.js";
 
 function searchRouter(db: DB) {
   const r = Router();
@@ -49,6 +50,8 @@ function searchRouter(db: DB) {
 export function createApp(db: DB, opts: { staticDir?: string } = {}) {
   const app = express();
   app.disable("x-powered-by");
+  // Behind a reverse proxy (nginx, a load balancer), set TRUST_PROXY so the audit log records the client's IP.
+  if (process.env.TRUST_PROXY) app.set("trust proxy", /^\d+$/.test(process.env.TRUST_PROXY) ? Number(process.env.TRUST_PROXY) : process.env.TRUST_PROXY);
   if (process.env.CORS_ORIGIN) app.use(cors({ origin: process.env.CORS_ORIGIN.split(",") }));
   app.use(express.json({ limit: "1mb" }));
 
@@ -72,6 +75,7 @@ export function createApp(db: DB, opts: { staticDir?: string } = {}) {
   api.use("/search", searchRouter(db));
   api.use("/suppliers", requireRole("admin"), suppliersRouter(db));
   api.use("/purchase-orders", requireRole("admin"), purchaseOrdersRouter(db));
+  api.use("/audit", requireRole("admin"), auditRouter(db));
   app.use("/api", api);
 
   app.use("/api", () => {

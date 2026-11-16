@@ -353,3 +353,47 @@ export interface Shift {
   countedCash: number | null;
   variance: number | null;
 }
+
+export type AuditEntity =
+  | "auth"
+  | "user"
+  | "product"
+  | "customer"
+  | "sale"
+  | "supplier"
+  | "purchase_order"
+  | "expense"
+  | "shift"
+  | "settings";
+
+export interface AuditEntry {
+  id: number;
+  createdAt: string;
+  userId: number | null;
+  userName: string;
+  action: string;
+  entity: AuditEntity;
+  entityId: number | null;
+  summary: string;
+  details: ({ changes?: Record<string, [unknown, unknown]> } & Record<string, unknown>) | null;
+  ip: string;
+  /** Discounts, refunds, cancellations, failed sign-ins, price/permission changes, unbalanced tills… */
+  attention: boolean;
+}
+
+export interface AuditSummary {
+  total: number;
+  attention: number;
+  failedLogins: number;
+  people: number;
+}
+
+export interface AuditPage {
+  entries: AuditEntry[];
+  nextBefore: number | null;
+}
+
+export interface AuditFacets {
+  actions: { entity: AuditEntity; action: string; n: number }[];
+  users: { id: number; name: string }[];
+}

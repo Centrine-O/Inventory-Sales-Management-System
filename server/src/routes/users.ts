@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { DB } from "../db.js";
 import { HttpError, currentUser, idParam, requireRole } from "../http.js";
 import { iso } from "../mappers.js";
+import { audit, describeChanges, diff } from "../audit.js";
 
 interface UserRow {
   id: number;
@@ -57,10 +58,16 @@ export function usersRouter(db: DB) {
 
   r.post("/", (req, res) => {
     const body = createSchema.parse(req.body);
-    const info = db
-      .prepare("INSERT INTO users (name, email, role, password_hash) VALUES (?, ?, ?, ?)")
-      .run(body.name, body.email, body.role, bcrypt.hashSync(body.password, 10));
-    res.status(201).json(mapUser(getUser(Number(info.lastInsertRowid))));
+    const hash = bcrypt.hashSync(body.password, 10);
+    const id = db.transaction(() => {
+      const info = db
+        .prepare("INSERT INTO users (name, email, role, password_hash) VALUES (?, ?, ?, ?)")
+        .run(body.name, body.email, body.role, hash);
+      const newId = Number(info.lastInsertRowid);
+      audit(db, req, { action: "created", entity: "user", entityId: newId, summary: `Created ${body.role} account for ${body.name} (${body.email})` });
+      return newId;
+    })();
+    res.status(201).json(mapUser(getUser(id)));
   });
 
   r.patch("/:id", (req, res) => {
@@ -74,17 +81,36 @@ export function usersRouter(db: DB) {
     if (losesAdmin && id === me.id) throw new HttpError(400, "You cannot demote or deactivate your own account");
     if (losesAdmin && activeAdminCount() <= 1) throw new HttpError(400, "At least one active admin is required");
 
-    db.prepare(
-      `UPDATE users SET name = ?, email = ?, role = ?, active = ?,
-         password_hash = COALESCE(?, password_hash) WHERE id = ?`,
-    ).run(
-      body.name ?? existing.name,
-      body.email ?? existing.email,
-      body.role ?? existing.role,
-      body.active === undefined ? existing.active : body.active ? 1 : 0,
-      body.password ? bcrypt.hashSync(body.password, 10) : null,
-      id,
-    );
+    const { password, ...fields } = body;
+    const changes = diff({ name: existing.name, email: existing.email, role: existing.role, active: existing.active === 1 }, fields);
+    const hash = password ? bcrypt.hashSync(password, 10) : null;
+    db.transaction(() => {
+      db.prepare(
+        `UPDATE users SET name = ?, email = ?, role = ?, active = ?,
+           password_hash = COALESCE(?, password_hash) WHERE id = ?`,
+      ).run(
+        body.name ?? existing.name,
+        body.email ?? existing.email,
+        body.role ?? existing.role,
+        body.active === undefined ? existing.active : body.active ? 1 : 0,
+        hash,
+        id,
+      );
+      // Never log the password itself, only that it was reset.
+      const parts = [describeChanges(changes, ["active"])];
+      if ("active" in changes) parts.unshift(body.active ? "reactivated" : "deactivated");
+      if (password) parts.push("password reset");
+      const summary = parts.filter(Boolean).join(", ");
+      if (summary) {
+        audit(db, req, {
+          action: "role" in changes ? "role_changed" : "active" in changes ? (body.active ? "reactivated" : "deactivated") : password && !Object.keys(changes).length ? "password_reset" : "updated",
+          entity: "user",
+          entityId: id,
+          summary: `${existing.name}: ${summary}`,
+          details: { changes, passwordReset: Boolean(password) },
+        });
+      }
+    })();
     res.json(mapUser(getUser(id)));
   });
 

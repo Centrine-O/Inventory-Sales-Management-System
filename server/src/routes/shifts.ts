@@ -3,6 +3,7 @@ import { z } from "zod";
 import { fromCents, toCents, type DB } from "../db.js";
 import { HttpError, currentUser, idParam, type AuthUser } from "../http.js";
 import { iso } from "../mappers.js";
+import { audit } from "../audit.js";
 
 interface ShiftRow {
   id: number;
@@ -173,8 +174,13 @@ export function shiftsRouter(db: DB) {
     const { openingFloat } = openSchema.parse(req.body);
     const me = currentUser(req);
     if (openShiftFor(db, me.id)) throw new HttpError(409, "Your till is already open");
-    const info = db.prepare("INSERT INTO shifts (user_id, opening_float_cents) VALUES (?, ?)").run(me.id, toCents(openingFloat));
-    res.status(201).json(shiftSummary(db, getShift(Number(info.lastInsertRowid))));
+    const id = db.transaction(() => {
+      const info = db.prepare("INSERT INTO shifts (user_id, opening_float_cents) VALUES (?, ?)").run(me.id, toCents(openingFloat));
+      const newId = Number(info.lastInsertRowid);
+      audit(db, req, { action: "opened", entity: "shift", entityId: newId, summary: `Opened till with KSh ${openingFloat.toLocaleString("en-KE")} float` });
+      return newId;
+    })();
+    res.status(201).json(shiftSummary(db, getShift(id)));
   });
 
   r.post("/:id/cash", (req, res) => {
@@ -190,13 +196,22 @@ export function shiftsRouter(db: DB) {
         throw new HttpError(400, `Only KSh ${fromCents(available).toLocaleString()} should be in the till`);
       }
     }
-    db.prepare("INSERT INTO cash_movements (shift_id, type, amount_cents, reason, user_id) VALUES (?, ?, ?, ?, ?)").run(
-      id,
-      body.type,
-      toCents(body.amount),
-      body.reason,
-      me.id,
-    );
+    db.transaction(() => {
+      db.prepare("INSERT INTO cash_movements (shift_id, type, amount_cents, reason, user_id) VALUES (?, ?, ?, ?, ?)").run(
+        id,
+        body.type,
+        toCents(body.amount),
+        body.reason,
+        me.id,
+      );
+      const whose = shift.user_id === me.id ? "" : ` (${shift.user_name}'s till)`;
+      audit(db, req, {
+        action: body.type === "in" ? "cash_in" : "cash_out",
+        entity: "shift",
+        entityId: id,
+        summary: `${body.type === "in" ? "Paid in" : "Paid out"} KSh ${body.amount.toLocaleString("en-KE")}${whose} · ${body.reason}`,
+      });
+    })();
     res.status(201).json(shiftSummary(db, getShift(id)));
   });
 
@@ -218,6 +233,17 @@ export function shiftsRouter(db: DB) {
         body.notes,
         id,
       );
+      const variance = toCents(body.countedCash) - expected;
+      const result = variance === 0 ? "balanced" : `${variance < 0 ? "short" : "over"} KSh ${fromCents(Math.abs(variance)).toLocaleString("en-KE")}`;
+      audit(db, req, {
+        action: "closed",
+        entity: "shift",
+        entityId: id,
+        summary:
+          `Closed ${shift.user_id === me.id ? "till" : `${shift.user_name}'s till`}: expected KSh ${fromCents(expected).toLocaleString("en-KE")}, ` +
+          `counted KSh ${body.countedCash.toLocaleString("en-KE")}, ${result}${body.notes ? ` · ${body.notes}` : ""}`,
+        details: { expected: fromCents(expected), counted: body.countedCash, variance: fromCents(variance) },
+      });
     })();
     res.json(shiftSummary(db, getShift(id)));
   });

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { fromCents, toCents, type DB } from "../db.js";
 import { HttpError, currentUser, idParam, requireRole } from "../http.js";
 import { SALE_SELECT, iso, mapSale, type SaleRow } from "../mappers.js";
+import { audit, describeChanges, diff } from "../audit.js";
 
 interface CustomerRow {
   id: number;
@@ -139,10 +140,20 @@ export function customersRouter(db: DB) {
     if (b.creditLimit > 0 && currentUser(req).role !== "admin") {
       throw new HttpError(403, "Only admins can set credit limits");
     }
-    const info = db
-      .prepare("INSERT INTO customers (name, email, phone, status, credit_limit_cents) VALUES (?, ?, ?, ?, ?)")
-      .run(b.name, b.email, b.phone, b.status, toCents(b.creditLimit));
-    res.status(201).json(mapCustomer(getCustomer(Number(info.lastInsertRowid))));
+    const id = db.transaction(() => {
+      const info = db
+        .prepare("INSERT INTO customers (name, email, phone, status, credit_limit_cents) VALUES (?, ?, ?, ?, ?)")
+        .run(b.name, b.email, b.phone, b.status, toCents(b.creditLimit));
+      const newId = Number(info.lastInsertRowid);
+      audit(db, req, {
+        action: "created",
+        entity: "customer",
+        entityId: newId,
+        summary: `Added customer ${b.name}${b.creditLimit > 0 ? ` with credit limit KSh ${b.creditLimit.toLocaleString("en-KE")}` : ""}`,
+      });
+      return newId;
+    })();
+    res.status(201).json(mapCustomer(getCustomer(id)));
   });
 
   r.patch("/:id", (req, res) => {
@@ -152,25 +163,43 @@ export function customersRouter(db: DB) {
     if (b.creditLimit !== undefined && toCents(b.creditLimit) !== c.credit_limit_cents && currentUser(req).role !== "admin") {
       throw new HttpError(403, "Only admins can change credit limits");
     }
-    db.prepare("UPDATE customers SET name = ?, email = ?, phone = ?, status = ?, credit_limit_cents = ? WHERE id = ?").run(
-      b.name ?? c.name,
-      b.email ?? c.email,
-      b.phone ?? c.phone,
-      b.status ?? c.status,
-      b.creditLimit === undefined ? c.credit_limit_cents : toCents(b.creditLimit),
-      id,
+    const changes = diff(
+      { name: c.name, email: c.email, phone: c.phone, status: c.status, creditLimit: fromCents(c.credit_limit_cents) },
+      b,
     );
+    db.transaction(() => {
+      db.prepare("UPDATE customers SET name = ?, email = ?, phone = ?, status = ?, credit_limit_cents = ? WHERE id = ?").run(
+        b.name ?? c.name,
+        b.email ?? c.email,
+        b.phone ?? c.phone,
+        b.status ?? c.status,
+        b.creditLimit === undefined ? c.credit_limit_cents : toCents(b.creditLimit),
+        id,
+      );
+      if (Object.keys(changes).length) {
+        audit(db, req, {
+          action: "creditLimit" in changes ? "credit_limit_changed" : "updated",
+          entity: "customer",
+          entityId: id,
+          summary: `${c.name}: ${describeChanges(changes)}`,
+          details: { changes },
+        });
+      }
+    })();
     res.json(mapCustomer(getCustomer(id)));
   });
 
   r.delete("/:id", requireRole("admin"), (req, res) => {
     const id = idParam(req);
-    getCustomer(id);
+    const c = getCustomer(id);
     const hasSales = db.prepare("SELECT 1 FROM sales WHERE customer_id = ? LIMIT 1").get(id);
     if (hasSales) {
       throw new HttpError(409, "This customer has sales history. Mark them inactive instead of deleting.");
     }
-    db.prepare("DELETE FROM customers WHERE id = ?").run(id);
+    db.transaction(() => {
+      db.prepare("DELETE FROM customers WHERE id = ?").run(id);
+      audit(db, req, { action: "deleted", entity: "customer", entityId: id, summary: `Deleted customer ${c.name}` });
+    })();
     res.status(204).end();
   });
 

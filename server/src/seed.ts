@@ -140,6 +140,26 @@ let invoice = 0;
 let returnCount = 0;
 let expenseCount = 0;
 let shiftCount = 0;
+let auditCount = 0;
+
+// Activity log entries, collected as the data is generated and written in time order at the end.
+interface AuditEvent {
+  at: string;
+  userId: number | null;
+  action: string;
+  entity: string;
+  entityId?: number | null;
+  summary: string;
+  details?: Record<string, unknown>;
+  ip?: string;
+}
+const events: AuditEvent[] = [];
+const userNames: Record<number, string> = { [adminId]: "Admin User", [cashierId]: "Mary Achieng" };
+const ipOf = (uid: number | null) => (uid === cashierId ? "192.168.1.20" : uid === adminId ? "192.168.1.35" : "192.168.1.77");
+const ksh = (cents: number) => `KSh ${(cents / 100).toLocaleString("en-KE")}`;
+const minutesLater = (at: string, mins: number) => sqlDate(new Date(new Date(at.replace(" ", "T") + "Z").getTime() + mins * 60_000));
+/** The activity log covers the last two weeks of the demo. */
+const auditFrom = sqlDate(daysAgo(14, 0));
 
 db.transaction(() => {
   for (let day = 60; day >= 0; day--) {
@@ -208,11 +228,25 @@ db.transaction(() => {
         const received = sqlDate(daysAgo(day, 7));
         const no = nextPo();
         const poId = Number(addPo.run(no, sid, "received", null, "", adminId, ordered, ordered, received).lastInsertRowid);
+        const lines: string[] = [];
+        let value = 0;
         for (const p of items) {
           const q = int(15, 40);
           addPoItem.run(poId, p.id, q, q, p.cost);
           p.stock += q;
           addMovement.run(p.id, q, "restock", no, adminId, received);
+          lines.push(`${q} × ${p.name}`);
+          value += q * p.cost;
+        }
+        if (received >= auditFrom) {
+          events.push({
+            at: received,
+            userId: adminId,
+            action: "received",
+            entity: "purchase_order",
+            entityId: poId,
+            summary: `Received ${lines.join(", ")} on ${no} (${ksh(value)}), order complete`,
+          });
         }
       }
     }
@@ -247,6 +281,19 @@ db.transaction(() => {
       value,
       damaged ? 0 : 1,
     );
+    const productName = catalog.find((x) => x.id === c.product_id)!.name;
+    if (when >= auditFrom) {
+      const reason = (db.prepare("SELECT reason FROM returns WHERE id = ?").get(retId) as { reason: string }).reason;
+      events.push({
+        at: when,
+        userId: adminId,
+        action: "return_processed",
+        entity: "sale",
+        entityId: c.id,
+        summary: `${no} on ${c.invoice_no}: 1 × ${productName} worth ${ksh(value)}, refunded ${ksh(value)} by M-Pesa${damaged ? ", 1 written off" : ""} · ${reason}`,
+        details: { returnNo: no, value: value / 100, refund: value / 100, refundMethod: "M-Pesa", reason },
+      });
+    }
     if (!damaged) {
       const p = catalog.find((x) => x.id === c.product_id)!;
       p.stock += 1;
@@ -263,8 +310,18 @@ db.transaction(() => {
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   const expense = (d: Date, category: string, payee: string, description: string, amount: number, method: string, ref = "") => {
     if (d > now) return;
-    addExpense.run(ymdLocal(d), category, payee, description, toCents(amount), method, ref, adminId, sqlDate(d));
+    const id = Number(addExpense.run(ymdLocal(d), category, payee, description, toCents(amount), method, ref, adminId, sqlDate(d)).lastInsertRowid);
     expenseCount++;
+    if (sqlDate(d) >= auditFrom) {
+      events.push({
+        at: sqlDate(d),
+        userId: adminId,
+        action: "created",
+        entity: "expense",
+        entityId: id,
+        summary: `Recorded ${category} expense of KSh ${amount.toLocaleString("en-KE")}${payee ? ` to ${payee}` : ""} (${ymdLocal(d)})`,
+      });
+    }
   };
   for (let m = 2; m >= 0; m--) {
     const first = new Date(now.getFullYear(), now.getMonth() - m, 1, 10);
@@ -299,13 +356,17 @@ db.transaction(() => {
   );
   for (let day = 13; day >= 0; day--) {
     for (const uid of [cashierId, adminId]) {
+      // Today only the cashier's till is running (left open below); the admin hasn't opened one yet.
+      if (day === 0 && uid === adminId) continue;
       const open = sqlDate(daysAgo(day, 7));
       const closeAt = daysAgo(day, 19);
       const close = sqlDate(closeAt > now ? now : closeAt); // never a closing time in the future
       const took = db.prepare("SELECT 1 FROM payments WHERE user_id = ? AND created_at BETWEEN ? AND ? LIMIT 1").get(uid, open, close);
-      if (!took) continue;
+      if (!took && day > 0) continue;
       const float = 500000;
       const shiftId = Number(openShift.run(uid, float, open).lastInsertRowid);
+      events.push({ at: minutesLater(open, -3), userId: uid, action: "login", entity: "auth", entityId: uid, summary: `${userNames[uid]} signed in` });
+      events.push({ at: open, userId: uid, action: "opened", entity: "shift", entityId: shiftId, summary: `Opened till with ${ksh(float)} float` });
       for (const st of [attachSales, attachPayments, attachReturns]) st.run(shiftId, uid, open, close);
       const cashIn = (
         db.prepare("SELECT COALESCE(SUM(amount_cents), 0) AS c FROM payments WHERE shift_id = ? AND method = 'Cash'").get(shiftId) as { c: number }
@@ -317,12 +378,20 @@ db.transaction(() => {
       // Bank most of the takings mid-afternoon on busy days.
       if (expected > 2_500_000) {
         const drop = Math.floor((expected - float) / 100_000) * 100_000;
-        addCashMove.run(shiftId, "out", drop, "Banked at Equity Bank", uid, sqlDate(daysAgo(day, 15)));
-        expected -= drop;
+        const at = sqlDate(daysAgo(day, 15));
+        if (at <= sqlDate(now)) {
+          addCashMove.run(shiftId, "out", drop, "Banked at Equity Bank", uid, at);
+          events.push({ at, userId: uid, action: "cash_out", entity: "shift", entityId: shiftId, summary: `Paid out ${ksh(drop)} · Banked at Equity Bank` });
+          expected -= drop;
+        }
       }
       if (rand() < 0.2) {
-        addCashMove.run(shiftId, "out", 15000, "Petty cash: milk and sugar", uid, sqlDate(daysAgo(day, 10)));
-        expected -= 15000;
+        const at = sqlDate(daysAgo(day, 10));
+        if (at <= sqlDate(now)) {
+          addCashMove.run(shiftId, "out", 15000, "Petty cash: milk and sugar", uid, at);
+          events.push({ at, userId: uid, action: "cash_out", entity: "shift", entityId: shiftId, summary: `Paid out ${ksh(15000)} · Petty cash: milk and sugar` });
+          expected -= 15000;
+        }
       }
       if (day === 0 && uid === cashierId) continue; // still open
       const variance = rand() < 0.75 ? 0 : pick([-5000, -2000, -10000, 1000, -50000]);
@@ -330,6 +399,17 @@ db.transaction(() => {
         "UPDATE shifts SET closed_at = ?, closed_by = ?, expected_cash_cents = ?, counted_cash_cents = ?, notes = ? WHERE id = ?",
       ).run(close, uid, expected, expected + variance, variance < -20000 ? "Short — checking against receipts" : "", shiftId);
       shiftCount++;
+      const note = variance < -20000 ? " · Short — checking against receipts" : "";
+      const result = variance === 0 ? "balanced" : `${variance < 0 ? "short" : "over"} ${ksh(Math.abs(variance))}`;
+      events.push({
+        at: close,
+        userId: uid,
+        action: "closed",
+        entity: "shift",
+        entityId: shiftId,
+        summary: `Closed till: expected ${ksh(expected)}, counted ${ksh(expected + variance)}, ${result}${note}`,
+        details: { expected: expected / 100, counted: (expected + variance) / 100, variance: variance / 100 },
+      });
     }
   }
 
@@ -337,7 +417,17 @@ db.transaction(() => {
   const drain = (sku: string, left: number) => {
     const p = catalog.find((c) => c.sku === sku)!;
     if (p.stock > left) {
-      addMovement.run(p.id, left - p.stock, "adjustment", "Stock count correction", adminId, sqlDate(daysAgo(1)));
+      const at = sqlDate(daysAgo(1, 17));
+      addMovement.run(p.id, left - p.stock, "adjustment", "Stock count correction", adminId, at);
+      events.push({
+        at,
+        userId: adminId,
+        action: "stock_adjusted",
+        entity: "product",
+        entityId: p.id,
+        summary: `Adjusted stock of ${p.name} by ${left - p.stock} (${p.stock} → ${left}) · Stock count correction`,
+        details: { reason: "adjustment", change: left - p.stock, before: p.stock, after: left, note: "Stock count correction" },
+      });
       p.stock = left;
     }
   };
@@ -361,6 +451,12 @@ db.transaction(() => {
       addPo.run(no, sid, status, status === "draft" ? null : expectedStr, notes, adminId, created, status === "draft" ? null : created, null)
         .lastInsertRowid,
     );
+    const supplierName = (db.prepare("SELECT name FROM suppliers WHERE id = ?").get(sid) as { name: string }).name;
+    const poTotal = sku.reduce((t, code) => t + Math.max(bySku(code).reorder * 2, 10) * bySku(code).cost, 0);
+    events.push({ at: created, userId: adminId, action: "created", entity: "purchase_order", entityId: poId, summary: `Drafted ${no} to ${supplierName} for ${ksh(poTotal)}` });
+    if (status !== "draft") {
+      events.push({ at: minutesLater(created, 4), userId: adminId, action: "ordered", entity: "purchase_order", entityId: poId, summary: `Placed ${no} with ${supplierName} for ${ksh(poTotal)}` });
+    }
     sku.forEach((code, i) => {
       const p = bySku(code);
       const qty = Math.max(p.reorder * 2, 10);
@@ -369,18 +465,116 @@ db.transaction(() => {
       if (got > 0) {
         p.stock += got;
         setStock.run(p.stock, p.id);
-        addMovement.run(p.id, got, "restock", no, adminId, sqlDate(daysAgo(1, 9)));
+        const at = sqlDate(daysAgo(1, 9));
+        addMovement.run(p.id, got, "restock", no, adminId, at);
+        const left = qty - got + sku.slice(1).reduce((t, c) => t + Math.max(bySku(c).reorder * 2, 10), 0);
+        events.push({
+          at,
+          userId: adminId,
+          action: "received",
+          entity: "purchase_order",
+          entityId: poId,
+          summary: `Received ${got} × ${p.name} on ${no} (${ksh(got * p.cost)}), ${left} still outstanding`,
+        });
       }
     });
   };
   openPo(["UCH-003", "WM-204"], "ordered", 2, "Deliver to back store");
   openPo(["FC-310", "SD-004"], "partially_received", 5, "Desks back-ordered by supplier");
   openPo(["ST-090"], "draft", 0, "");
+
+  // Events derived from the sales history.
+  const salesSince = db
+    .prepare("SELECT id, invoice_no, user_id, status, subtotal_cents, discount_cents, total_cents, created_at FROM sales WHERE created_at >= ?")
+    .all(auditFrom) as { id: number; invoice_no: string; user_id: number; status: string; subtotal_cents: number; discount_cents: number; total_cents: number; created_at: string }[];
+  for (const sale of salesSince) {
+    if (sale.discount_cents > 0) {
+      const pct = Math.round((sale.discount_cents / sale.subtotal_cents) * 1000) / 10;
+      events.push({
+        at: sale.created_at,
+        userId: sale.user_id,
+        action: "discount_given",
+        entity: "sale",
+        entityId: sale.id,
+        summary: `${sale.invoice_no}: discount of ${ksh(sale.discount_cents)} (${pct}%) on ${ksh(sale.subtotal_cents)}`,
+        details: { subtotal: sale.subtotal_cents / 100, discount: sale.discount_cents / 100, percent: pct, total: sale.total_cents / 100 },
+      });
+    }
+    if (sale.status === "cancelled") {
+      events.push({
+        at: minutesLater(sale.created_at, 25),
+        userId: adminId,
+        action: "cancelled",
+        entity: "sale",
+        entityId: sale.id,
+        summary: `Cancelled ${sale.invoice_no} (${ksh(sale.total_cents)}, was paid); stock put back`,
+        details: { previousStatus: "paid", total: sale.total_cents / 100 },
+      });
+    }
+  }
+
+  // A few one-off events an owner would want to spot.
+  const lamp = bySku("DL-140");
+  const priceAt = sqlDate(daysAgo(4, 8));
+  events.push({
+    at: priceAt,
+    userId: adminId,
+    action: "price_changed",
+    entity: "product",
+    entityId: lamp.id,
+    summary: `${lamp.name}: price ${ksh(lamp.price - 20000)} → ${ksh(lamp.price)}`,
+    details: { changes: { price: [(lamp.price - 20000) / 100, lamp.price / 100] } },
+  });
+  const hub = customerIds[8];
+  events.push({
+    at: sqlDate(daysAgo(12, 11)),
+    userId: adminId,
+    action: "credit_limit_changed",
+    entity: "customer",
+    entityId: hub,
+    summary: "Nairobi Tech Hub Ltd: credit limit KSh 150,000 → KSh 250,000",
+    details: { changes: { creditLimit: [150000, 250000] } },
+  });
+  const typo = sqlDate(daysAgo(6, 7));
+  events.push({ at: minutesLater(typo, -5), userId: cashierId, action: "login_failed", entity: "auth", entityId: cashierId, summary: "Failed sign-in for cashier@stockflow.local" });
+  const night = sqlDate(daysAgo(2, 22));
+  for (const [i, email] of ["admin@stockflow.local", "admin@stockflow.local", "manager@stockflow.local"].entries()) {
+    const known = email === "admin@stockflow.local";
+    events.push({
+      at: minutesLater(night, i),
+      userId: known ? adminId : null,
+      action: "login_failed",
+      entity: "auth",
+      entityId: known ? adminId : null,
+      summary: `Failed sign-in for ${email}${known ? "" : " (no such account)"}`,
+      ip: "41.90.64.118",
+    });
+  }
+
+  const addAudit = db.prepare(
+    `INSERT INTO audit_log (created_at, user_id, user_name, action, entity, entity_id, summary, details, ip)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  // Insert oldest first so ids follow time, as they do in real use.
+  for (const e of events.filter((x) => x.at >= auditFrom && x.at <= sqlDate(now)).sort((a, b) => a.at.localeCompare(b.at))) {
+    addAudit.run(
+      e.at,
+      e.userId,
+      e.userId ? userNames[e.userId] : "",
+      e.action,
+      e.entity,
+      e.entityId ?? null,
+      e.summary,
+      e.details ? JSON.stringify(e.details) : null,
+      e.ip ?? ipOf(e.userId),
+    );
+    auditCount++;
+  }
 })();
 
 console.log(
   `Seeded ${catalog.length} products, ${Object.keys(supplierByCategory).length} suppliers, ${poCount} purchase orders, ` +
-    `${returnCount} returns, ${expenseCount} expenses, ${shiftCount} closed till shifts, ` +
+    `${returnCount} returns, ${expenseCount} expenses, ${shiftCount} closed till shifts, ${auditCount} activity log entries, ` +
     `${customerIds.length} customers, ${invoice} sales into ${dbFile}`,
 );
 console.log("Sign in with admin@stockflow.local / admin1234 or cashier@stockflow.local / cashier1234");

@@ -197,6 +197,29 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Who did what, for accountability. The actor's name is copied so entries still read correctly if the
+-- account is later renamed. No foreign keys: the log must outlive anything it describes.
+CREATE TABLE IF NOT EXISTS audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  user_id INTEGER,
+  user_name TEXT NOT NULL DEFAULT '',
+  action TEXT NOT NULL,
+  entity TEXT NOT NULL,
+  entity_id INTEGER,
+  summary TEXT NOT NULL,
+  details TEXT,
+  ip TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity, entity_id);
+CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
+-- Append-only: entries can't be edited or removed through the database connection the app uses.
+CREATE TRIGGER IF NOT EXISTS trg_audit_no_update BEFORE UPDATE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'The audit log is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS trg_audit_no_delete BEFORE DELETE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'The audit log is append-only'); END;
 `;
 
 export const DEFAULT_SETTINGS: Record<string, string | number | boolean> = {

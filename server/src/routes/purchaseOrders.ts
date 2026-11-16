@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { fromCents, toCents, type DB } from "../db.js";
 import { HttpError, currentUser, idParam } from "../http.js";
+import { audit } from "../audit.js";
 import { iso, type ProductRow } from "../mappers.js";
 
 export interface PurchaseOrderRow {
@@ -247,6 +248,13 @@ export function purchaseOrdersRouter(db: DB) {
         .run(`PO-${String(next).padStart(5, "0")}`, b.supplierId, b.expectedDate, b.notes, me.id);
       const poId = Number(info.lastInsertRowid);
       writeItems(poId, b.items);
+      const po = getRow(poId);
+      audit(db, req, {
+        action: "created",
+        entity: "purchase_order",
+        entityId: poId,
+        summary: `Drafted ${po.po_number} to ${po.supplier_name} for KSh ${fromCents(po.total_cents).toLocaleString("en-KE")}`,
+      });
       return poId;
     })();
     res.status(201).json(getDetail(id));
@@ -282,7 +290,15 @@ export function purchaseOrdersRouter(db: DB) {
     const po = getRow(id);
     if (po.status !== "draft") throw new HttpError(400, "Only draft purchase orders can be placed");
     assertSupplier(po.supplier_id);
-    db.prepare("UPDATE purchase_orders SET status = 'ordered', ordered_at = datetime('now') WHERE id = ?").run(id);
+    db.transaction(() => {
+      db.prepare("UPDATE purchase_orders SET status = 'ordered', ordered_at = datetime('now') WHERE id = ?").run(id);
+      audit(db, req, {
+        action: "ordered",
+        entity: "purchase_order",
+        entityId: id,
+        summary: `Placed ${po.po_number} with ${po.supplier_name} for KSh ${fromCents(po.total_cents).toLocaleString("en-KE")}`,
+      });
+    })();
     res.json(getDetail(id));
   });
 
@@ -301,6 +317,8 @@ export function purchaseOrdersRouter(db: DB) {
         throw new HttpError(400, po.status === "draft" ? "Place the order before receiving goods" : "This purchase order is closed");
       }
       let receivedAny = false;
+      const received: string[] = [];
+      let receivedValue = 0;
       for (const line of b.items) {
         if (line.quantity === 0) continue;
         const item = db
@@ -332,6 +350,9 @@ export function purchaseOrdersRouter(db: DB) {
           "INSERT INTO stock_movements (product_id, change, reason, reference, user_id) VALUES (?, ?, 'restock', ?, ?)",
         ).run(item.product_id, line.quantity, b.note ? `${po.po_number} · ${b.note}` : po.po_number, me.id);
         receivedAny = true;
+        const name = (db.prepare("SELECT name FROM products WHERE id = ?").get(item.product_id) as { name: string }).name;
+        received.push(`${line.quantity} × ${name}`);
+        receivedValue += line.quantity * item.unit_cost_cents;
       }
       if (!receivedAny) throw new HttpError(400, "Enter a quantity for at least one line");
 
@@ -345,6 +366,15 @@ export function purchaseOrdersRouter(db: DB) {
       } else {
         db.prepare("UPDATE purchase_orders SET status = 'partially_received' WHERE id = ?").run(id);
       }
+      audit(db, req, {
+        action: "received",
+        entity: "purchase_order",
+        entityId: id,
+        summary:
+          `Received ${received.join(", ")} on ${po.po_number} (KSh ${fromCents(receivedValue).toLocaleString("en-KE")})` +
+          (outstanding === 0 ? ", order complete" : `, ${outstanding} still outstanding`) +
+          (b.note ? ` · ${b.note}` : ""),
+      });
     })();
 
     res.json(getDetail(id));
@@ -355,7 +385,10 @@ export function purchaseOrdersRouter(db: DB) {
     const id = idParam(req);
     const po = getRow(id);
     if (po.status === "received" || po.status === "cancelled") throw new HttpError(400, "This purchase order is already closed");
-    db.prepare("UPDATE purchase_orders SET status = 'cancelled' WHERE id = ?").run(id);
+    db.transaction(() => {
+      db.prepare("UPDATE purchase_orders SET status = 'cancelled' WHERE id = ?").run(id);
+      audit(db, req, { action: "cancelled", entity: "purchase_order", entityId: id, summary: `Cancelled ${po.po_number} to ${po.supplier_name}` });
+    })();
     res.json(getDetail(id));
   });
 
@@ -363,7 +396,10 @@ export function purchaseOrdersRouter(db: DB) {
     const id = idParam(req);
     const po = getRow(id);
     if (po.status !== "draft") throw new HttpError(400, "Only drafts can be deleted; cancel placed orders instead");
-    db.prepare("DELETE FROM purchase_orders WHERE id = ?").run(id);
+    db.transaction(() => {
+      db.prepare("DELETE FROM purchase_orders WHERE id = ?").run(id);
+      audit(db, req, { action: "deleted", entity: "purchase_order", entityId: id, summary: `Deleted draft ${po.po_number} to ${po.supplier_name}` });
+    })();
     res.status(204).end();
   });
 

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { fromCents, toCents, type DB } from "../db.js";
 import { HttpError, currentUser, idParam } from "../http.js";
 import { iso, toCsv } from "../mappers.js";
+import { audit, describeChanges, diff } from "../audit.js";
 
 export const DEFAULT_EXPENSE_CATEGORIES = [
   "Rent",
@@ -151,23 +152,36 @@ export function expensesRouter(db: DB) {
 
   r.post("/", (req, res) => {
     const b = createSchema.parse(req.body);
-    const info = db
-      .prepare(
-        `INSERT INTO expenses (expense_date, category, payee, description, amount_cents, payment_method, reference, user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(b.date, b.category, b.payee, b.description, toCents(b.amount), b.paymentMethod, b.reference, currentUser(req).id);
-    res.status(201).json(mapExpense(getExpense(Number(info.lastInsertRowid))));
+    const id = db.transaction(() => {
+      const info = db
+        .prepare(
+          `INSERT INTO expenses (expense_date, category, payee, description, amount_cents, payment_method, reference, user_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(b.date, b.category, b.payee, b.description, toCents(b.amount), b.paymentMethod, b.reference, currentUser(req).id);
+      const newId = Number(info.lastInsertRowid);
+      audit(db, req, {
+        action: "created",
+        entity: "expense",
+        entityId: newId,
+        summary: `Recorded ${b.category} expense of KSh ${b.amount.toLocaleString("en-KE")}${b.payee ? ` to ${b.payee}` : ""} (${b.date})`,
+      });
+      return newId;
+    })();
+    res.status(201).json(mapExpense(getExpense(id)));
   });
 
   r.patch("/:id", (req, res) => {
     const id = idParam(req);
     const b = updateSchema.parse(req.body);
     const e = getExpense(id);
-    db.prepare(
+    const changes = diff(mapExpense(e), b);
+    const update = db.prepare(
       `UPDATE expenses SET expense_date = ?, category = ?, payee = ?, description = ?, amount_cents = ?, payment_method = ?, reference = ?
        WHERE id = ?`,
-    ).run(
+    );
+    db.transaction(() => {
+      update.run(
       b.date ?? e.expense_date,
       b.category ?? e.category,
       b.payee ?? e.payee,
@@ -176,14 +190,33 @@ export function expensesRouter(db: DB) {
       b.paymentMethod ?? e.payment_method,
       b.reference ?? e.reference,
       id,
-    );
+      );
+      if (Object.keys(changes).length) {
+        audit(db, req, {
+          action: "updated",
+          entity: "expense",
+          entityId: id,
+          summary: `${e.category} expense of ${e.expense_date}: ${describeChanges(changes)}`,
+          details: { changes },
+        });
+      }
+    })();
     res.json(mapExpense(getExpense(id)));
   });
 
   r.delete("/:id", (req, res) => {
     const id = idParam(req);
-    getExpense(id);
-    db.prepare("DELETE FROM expenses WHERE id = ?").run(id);
+    const e = getExpense(id);
+    db.transaction(() => {
+      db.prepare("DELETE FROM expenses WHERE id = ?").run(id);
+      audit(db, req, {
+        action: "deleted",
+        entity: "expense",
+        entityId: id,
+        summary: `Deleted ${e.category} expense of KSh ${fromCents(e.amount_cents).toLocaleString("en-KE")}${e.payee ? ` to ${e.payee}` : ""} (${e.expense_date})`,
+        details: { expense: mapExpense(e) },
+      });
+    })();
     res.status(204).end();
   });
 

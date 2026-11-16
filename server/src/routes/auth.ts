@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import type { DB } from "../db.js";
 import { HttpError, currentUser, requireAuth, signToken, type Role } from "../http.js";
+import { audit } from "../audit.js";
 
 interface UserRow {
   id: number;
@@ -30,10 +31,27 @@ export function authRouter(db: DB) {
     const { email, password } = loginSchema.parse(req.body);
     const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email) as UserRow | undefined;
     if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+      audit(db, req, {
+        action: "login_failed",
+        entity: "auth",
+        entityId: user?.id ?? null,
+        summary: `Failed sign-in for ${email}${user ? "" : " (no such account)"}`,
+        actor: user ? { id: user.id, name: user.name } : null,
+      });
       throw new HttpError(401, "Invalid email or password");
     }
-    if (!user.active) throw new HttpError(403, "This account has been deactivated");
+    if (!user.active) {
+      audit(db, req, {
+        action: "login_blocked",
+        entity: "auth",
+        entityId: user.id,
+        summary: `Sign-in refused for deactivated account ${email}`,
+        actor: { id: user.id, name: user.name },
+      });
+      throw new HttpError(403, "This account has been deactivated");
+    }
     const authUser = { id: user.id, name: user.name, email: user.email, role: user.role };
+    audit(db, req, { action: "login", entity: "auth", entityId: user.id, summary: `${user.name} signed in`, actor: authUser });
     res.json({ token: signToken(authUser), user: authUser });
   });
 
@@ -55,7 +73,11 @@ export function authRouter(db: DB) {
     if (!row || !bcrypt.compareSync(currentPassword, row.password_hash)) {
       throw new HttpError(400, "Current password is incorrect");
     }
-    db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(bcrypt.hashSync(newPassword, 10), me.id);
+    const hash = bcrypt.hashSync(newPassword, 10);
+    db.transaction(() => {
+      db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hash, me.id);
+      audit(db, req, { action: "password_changed", entity: "auth", entityId: me.id, summary: `${me.name} changed their password` });
+    })();
     res.json({ ok: true });
   });
 

@@ -32,6 +32,7 @@ Demo accounts (created by the seed):
 - **Returns & refunds** (admin) — return some or all items from a sale, valued at the discounted price actually paid. Each item goes back to stock or is written off as damaged. A return first reduces anything still owed on the sale; only overpayment is refunded (Cash, M-Pesa with code, Card or Bank Transfer). Reports net returns out of revenue, profit and product/category figures in the period they happen. Sales with returns can't be cancelled.
 - **Expenses & profit and loss** (admin) — record running costs (rent, wages, utilities, transport, M-Pesa charges, custom categories) with payee, method and reference; filter by period and category, see spend by category, export CSV. Reports show a full P&L: revenue after returns − cost of goods = gross profit − expenses by category = net profit and net margin (also in the CSV export).
 - **Till & cash drawer** — each staff member opens their till with a float. Cash sales, credit payments and cash refunds are linked to the open till automatically (by database trigger, so nothing is missed), along with pay-ins and pay-outs such as banking or petty cash. At close, count the drawer with the KES note-and-coin counter; the system records expected vs counted and any shortage or overage, and produces a printable end-of-shift report. Admins see everyone's shifts; an optional setting requires an open till before selling or taking payments.
+- **Activity log** (admin) — an append-only record of who did what and when: sign-ins and failed sign-ins (with IP), price and cost changes (before → after), stock corrections, discounts, cancellations, returns and refunds, credit limit changes, staff role/deactivation/password resets, settings changes, purchase orders, expenses, and till opens, pay-outs and closes. Events an owner should look at (discounts, refunds, cancellations, price or permission changes, manual stock corrections, tills that didn't balance, failed sign-ins) are flagged under "Needs attention". Filter by date, area, person or text; export to CSV. Database triggers block edits and deletions, and passwords are never logged.
 - **Customers** — contact details, active/inactive, lifetime orders and spend, purchase history.
 - **Dashboard** — month-to-date revenue vs the same span last month, today's sales, pending payments, 7-day revenue chart, recent sales, low-stock watchlist.
 - **Reports** (admin) — any date range: revenue, orders, average order, gross profit and margin (using cost captured at sale time), collected vs outstanding, daily trend, revenue by category and payment method, top products and customers, inventory value. CSV export.
@@ -48,6 +49,7 @@ Demo accounts (created by the seed):
 | Cancel sales, process returns, view reports, change settings |   | ✓ |
 | Set customer credit limits                   |   | ✓ |
 | Suppliers, purchase orders and expenses      |   | ✓ |
+| Activity log                                 |   | ✓ |
 | Manage staff accounts                        |   | ✓ |
 
 Permissions are enforced by the API; the UI simply hides what a role can't use.
@@ -87,6 +89,7 @@ Environment variables (see `.env.example`):
 | `ADMIN_EMAIL`     | `admin@stockflow.local`         | First-boot admin only                   |
 | `ADMIN_PASSWORD`  | `admin1234`                     | First-boot admin only                   |
 | `CORS_ORIGIN`     | unset (same-origin only)        | Comma-separated, if the UI is hosted elsewhere |
+| `TRUST_PROXY`     | unset                           | Number of proxy hops (e.g. `1` behind nginx) so the activity log records client IPs |
 
 Dates in reports use the server's local timezone — set `TZ` (e.g. `TZ=Africa/Nairobi`) on the host or container.
 
@@ -116,6 +119,8 @@ GET    /purchase-orders[?status=open|draft|...&supplierId&search]   POST /purcha
 GET    /purchase-orders/suggestions                 GET/PATCH/DELETE /purchase-orders/:id
 POST   /purchase-orders/:id/order    POST /purchase-orders/:id/receive    POST /purchase-orders/:id/cancel
 GET/POST /users                    PATCH /users/:id        (admin)
+GET    /audit[?from&to&userId&entity&entityId&action&search&attention=true&before&limit]   (admin, newest first)
+GET    /audit/summary[same filters]   GET /audit/facets   GET /audit/export.csv            (admin, read-only)
 ```
 
 Money is stored as integer cents in SQLite and exposed as decimal shillings. Schema changes are applied automatically on startup, so existing databases upgrade in place.

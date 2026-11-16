@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ymd } from "@/lib/format";
 
 const PRESETS: Record<string, { label: string; range: () => [Date, Date] }> = {
+  today: { label: "Today", range: () => [new Date(), new Date()] },
   "7d": { label: "Last 7 days", range: () => [subDays(new Date(), 6), new Date()] },
   "30d": { label: "Last 30 days", range: () => [subDays(new Date(), 29), new Date()] },
   "90d": { label: "Last 90 days", range: () => [subDays(new Date(), 89), new Date()] },

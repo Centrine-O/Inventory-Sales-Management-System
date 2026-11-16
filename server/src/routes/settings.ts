@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import type { DB } from "../db.js";
 import { requireRole } from "../http.js";
+import { audit, describeChanges, diff } from "../audit.js";
 
 const settingsSchema = z
   .object({
@@ -37,8 +38,12 @@ export function settingsRouter(db: DB) {
     const upsert = db.prepare(
       "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     );
+    const changes = diff(getSettings(db), body);
     db.transaction(() => {
       for (const [k, v] of Object.entries(body)) upsert.run(k, JSON.stringify(v));
+      if (Object.keys(changes).length) {
+        audit(db, req, { action: "updated", entity: "settings", summary: `Settings: ${describeChanges(changes)}`, details: { changes } });
+      }
     })();
     res.json(getSettings(db));
   });
