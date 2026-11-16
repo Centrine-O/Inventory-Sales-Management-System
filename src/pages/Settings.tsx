@@ -98,7 +98,12 @@ function BusinessProfile({ readOnly }: { readOnly: boolean }) {
   );
 }
 
-const ALERTS: { key: "lowStockAlerts" | "largeTransactionReview"; label: string; hint: string }[] = [
+const ALERTS: { key: "lowStockAlerts" | "largeTransactionReview" | "requireShiftForSales"; label: string; hint: string }[] = [
+  {
+    key: "requireShiftForSales",
+    label: "Require an open till to sell",
+    hint: "Staff must open their till with a float before recording sales or taking payments",
+  },
   { key: "lowStockAlerts", label: "Low stock alerts", hint: "Show products at or below their reorder level in the header bell" },
   { key: "largeTransactionReview", label: "Large transaction review", hint: "Flag sales at or above a threshold in the sales list" },
 ];

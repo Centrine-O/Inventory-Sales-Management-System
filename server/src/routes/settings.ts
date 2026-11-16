@@ -15,6 +15,7 @@ const settingsSchema = z
     dailySummary: z.boolean(),
     largeTransactionReview: z.boolean(),
     largeTransactionThreshold: z.coerce.number().min(0),
+    requireShiftForSales: z.boolean(),
   })
   .partial()
   .strict();

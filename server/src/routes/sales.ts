@@ -3,6 +3,7 @@ import { z } from "zod";
 import { fromCents, toCents, type DB } from "../db.js";
 import { HttpError, currentUser, idParam, requireRole } from "../http.js";
 import { getSettings } from "./settings.js";
+import { openShiftFor } from "./shifts.js";
 import { SALE_SELECT, iso, mapSale, toCsv, type ProductRow, type SaleRow } from "../mappers.js";
 
 const PAYMENT_METHODS = ["Cash", "Card", "M-Pesa", "Bank Transfer"] as const;
@@ -246,7 +247,10 @@ export function salesRouter(db: DB) {
   r.post("/", (req, res) => {
     const body = createSchema.parse(req.body);
     const me = currentUser(req);
-    const { taxRate } = getSettings(db) as { taxRate: number };
+    const { taxRate, requireShiftForSales } = getSettings(db) as { taxRate: number; requireShiftForSales?: boolean };
+    if (requireShiftForSales && !openShiftFor(db, me.id)) {
+      throw new HttpError(409, "Open your till before recording sales");
+    }
 
     const saleId = db.transaction(() => {
       let customer: { name: string; credit_limit_cents: number } | undefined;
@@ -370,6 +374,9 @@ export function salesRouter(db: DB) {
         }
       }
       if (status === "paid") {
+        if ((getSettings(db) as { requireShiftForSales?: boolean }).requireShiftForSales && !openShiftFor(db, me.id)) {
+          throw new HttpError(409, "Open your till before taking payments");
+        }
         // Settle whatever is still owed in one payment.
         const balance = saleBalanceCents(db, id);
         if (balance > 0) {
@@ -499,6 +506,9 @@ export function salesRouter(db: DB) {
     const id = idParam(req);
     const body = paymentSchema.parse(req.body);
     const me = currentUser(req);
+    if ((getSettings(db) as { requireShiftForSales?: boolean }).requireShiftForSales && !openShiftFor(db, me.id)) {
+      throw new HttpError(409, "Open your till before taking payments");
+    }
     db.transaction(() => {
       const sale = db.prepare("SELECT status FROM sales WHERE id = ?").get(id) as { status: string } | undefined;
       if (!sale) throw new HttpError(404, "Sale not found");

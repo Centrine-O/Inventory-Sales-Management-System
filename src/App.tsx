@@ -22,6 +22,7 @@ const Settings = lazy(() => import("./pages/Settings"));
 const Suppliers = lazy(() => import("./pages/Suppliers"));
 const PurchaseOrders = lazy(() => import("./pages/PurchaseOrders"));
 const Expenses = lazy(() => import("./pages/Expenses"));
+const Till = lazy(() => import("./pages/Till"));
 
 const PageFallback = () => (
   <div className="flex min-h-screen items-center justify-center">
@@ -55,6 +56,7 @@ const App = () => (
                 <Route path="/app/products" element={<Products />} />
                 <Route path="/app/customers" element={<Customers />} />
                 <Route path="/app/sales" element={<Sales />} />
+                <Route path="/app/till" element={<Till />} />
                 <Route path="/app/settings" element={<Settings />} />
               </Route>
               <Route element={<ProtectedRoute adminOnly />}>

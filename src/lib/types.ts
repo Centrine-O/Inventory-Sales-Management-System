@@ -248,6 +248,7 @@ export interface Settings {
   dailySummary: boolean;
   largeTransactionReview: boolean;
   largeTransactionThreshold: number;
+  requireShiftForSales: boolean;
 }
 
 export interface SearchResults {
@@ -327,4 +328,28 @@ export interface ReorderGroup {
     suggestedQuantity: number;
     unitCost: number;
   }[];
+}
+
+export interface Shift {
+  id: number;
+  userId: number;
+  userName: string;
+  status: "open" | "closed";
+  openedAt: string;
+  closedAt: string | null;
+  closedBy: string | null;
+  notes: string;
+  openingFloat: number;
+  sales: { count: number; total: number; onCredit: number };
+  takings: { method: PaymentMethod; count: number; amount: number }[];
+  totalTaken: number;
+  refunds: { method: PaymentMethod; count: number; amount: number }[];
+  cashTaken: number;
+  cashRefunded: number;
+  payIns: number;
+  payOuts: number;
+  movements: { id: number; type: "in" | "out"; amount: number; reason: string; userName: string; createdAt: string }[];
+  expectedCash: number;
+  countedCash: number | null;
+  variance: number | null;
 }

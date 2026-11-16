@@ -12,7 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Separator } from "@/components/ui/separator";
 import { CustomerFormDialog } from "@/components/customers/CustomerDialogs";
-import { useCreateSale, useCustomers, useProducts, useSettings } from "@/hooks/api";
+import { useCreateSale, useCurrentShift, useCustomers, useProducts, useSettings } from "@/hooks/api";
+import { Link } from "react-router-dom";
 import { ksh, kshExact } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { PAYMENT_METHODS, type PaymentMethod, type Product, type SaleDetail } from "@/lib/types";
@@ -36,6 +37,8 @@ export function NewSaleDialog({
   const { data: products = [], isLoading: productsLoading } = useProducts();
   const { data: customers = [] } = useCustomers({ status: "active" });
   const { data: settings } = useSettings();
+  const { data: shift, isLoading: shiftLoading } = useCurrentShift();
+  const tillRequired = Boolean(settings?.requireShiftForSales) && !shiftLoading && !shift;
   const create = useCreateSale();
 
   const [lines, setLines] = useState<Line[]>([]);
@@ -136,6 +139,7 @@ export function NewSaleDialog({
     discountNum > subtotal && "Discount is larger than the subtotal",
     onCredit && customer === null && "Choose a customer to sell on credit",
     overLimit && `Over ${customer!.name}'s credit limit of ${ksh(customer!.creditLimit)}`,
+    tillRequired && "Open your till before recording sales",
   ].filter(Boolean) as string[];
 
   const submit = () =>
@@ -174,6 +178,14 @@ export function NewSaleDialog({
           </DialogHeader>
 
           <div className="space-y-5">
+            {tillRequired && (
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-warning/50 bg-warning/10 p-3 text-sm">
+                <span>Your till is closed. Open it with your starting float before recording sales.</span>
+                <Button size="sm" variant="outline" asChild onClick={() => onOpenChange(false)}>
+                  <Link to="/app/till">Open till</Link>
+                </Button>
+              </div>
+            )}
             <form
               onSubmit={(e) => {
                 e.preventDefault();

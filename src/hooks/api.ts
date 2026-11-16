@@ -19,6 +19,7 @@ import type {
   Sale,
   SaleDetail,
   SearchResults,
+  Shift,
   Settings,
   StockStatus,
   Supplier,
@@ -39,6 +40,7 @@ const INVENTORY_KEYS = [
   ["purchase-order"],
   ["suppliers"],
   ["supplier"],
+  ["shifts"],
 ];
 
 function useInvalidate() {
@@ -211,7 +213,7 @@ export function useRecordPayment() {
     mutationFn: ({ saleId, ...body }: { saleId: number; amount: number; method: PaymentMethod; reference: string }) =>
       api.post<SaleDetail>(`/sales/${saleId}/payments`, body),
     onSuccess: (s, vars) => {
-      invalidate([["sales"], ["sale"], ["customers"], ["customer"], ["dashboard"], ["reports"]]);
+      invalidate([["sales"], ["sale"], ["customers"], ["customer"], ["dashboard"], ["reports"], ["shifts"]]);
       toast.success(s.status === "paid" ? `${s.invoiceNo} is now fully paid` : `Payment of KSh ${vars.amount.toLocaleString()} recorded`);
     },
     onError,
@@ -493,6 +495,65 @@ export function useDeleteExpense() {
     onSuccess: () => {
       invalidate([["expenses"], ["reports"]]);
       toast.success("Expense deleted");
+    },
+    onError,
+  });
+}
+
+// ---------- Till shifts ----------
+
+export const useCurrentShift = () =>
+  useQuery({
+    queryKey: ["shifts", "current"],
+    queryFn: () => api.get<{ shift: Shift | null }>("/shifts/current").then((r) => r.shift),
+    refetchInterval: 60_000,
+  });
+
+export const useShifts = (filters: { from?: string; to?: string; userId?: number } = {}) =>
+  useQuery({
+    queryKey: ["shifts", "list", filters],
+    queryFn: () => api.get<Shift[]>(`/shifts${qs(filters)}`),
+    placeholderData: keepPreviousData,
+  });
+
+export const useShift = (id: number | null) =>
+  useQuery({ queryKey: ["shifts", "one", id], queryFn: () => api.get<Shift>(`/shifts/${id}`), enabled: id !== null });
+
+export function useOpenShift() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (openingFloat: number) => api.post<Shift>("/shifts/open", { openingFloat }),
+    onSuccess: () => {
+      invalidate([["shifts"]]);
+      toast.success("Till opened");
+    },
+    onError,
+  });
+}
+
+export function useCashMovement() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ shiftId, ...body }: { shiftId: number; type: "in" | "out"; amount: number; reason: string }) =>
+      api.post<Shift>(`/shifts/${shiftId}/cash`, body),
+    onSuccess: (_s, v) => {
+      invalidate([["shifts"]]);
+      toast.success(`${v.type === "in" ? "Pay-in" : "Pay-out"} of KSh ${v.amount.toLocaleString()} recorded`);
+    },
+    onError,
+  });
+}
+
+export function useCloseShift() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ shiftId, ...body }: { shiftId: number; countedCash: number; notes: string }) =>
+      api.post<Shift>(`/shifts/${shiftId}/close`, body),
+    onSuccess: (s) => {
+      invalidate([["shifts"]]);
+      const v = s.variance ?? 0;
+      if (v === 0) toast.success("Till closed — cash balances exactly");
+      else toast.warning(`Till closed — ${v < 0 ? "short" : "over"} by KSh ${Math.abs(v).toLocaleString()}`);
     },
     onError,
   });

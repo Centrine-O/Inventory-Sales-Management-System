@@ -139,6 +139,7 @@ const methods = ["Cash", "M-Pesa", "M-Pesa", "M-Pesa", "Card", "Bank Transfer"];
 let invoice = 0;
 let returnCount = 0;
 let expenseCount = 0;
+let shiftCount = 0;
 
 db.transaction(() => {
   for (let day = 60; day >= 0; day--) {
@@ -285,6 +286,53 @@ db.transaction(() => {
   expense(daysAgo(18, 14), "Repairs & maintenance", "Fundi John", "Fix shop shutter", 3800, "Cash");
   expense(daysAgo(9, 10), "Office & cleaning supplies", "Naivas Supermarket", "Cleaning supplies and tea", 2150, "Card");
 
+  // Till shifts for the last two weeks: each person who took money that day had a till from 07:30 to 19:30.
+  // Today's cashier till is left open so the Till page has a live shift to show.
+  const openShift = db.prepare("INSERT INTO shifts (user_id, opening_float_cents, opened_at) VALUES (?, ?, ?)");
+  const attach = (table: string) =>
+    db.prepare(`UPDATE ${table} SET shift_id = ? WHERE user_id = ? AND created_at >= ? AND created_at <= ?`);
+  const attachSales = attach("sales");
+  const attachPayments = attach("payments");
+  const attachReturns = attach("returns");
+  const addCashMove = db.prepare(
+    "INSERT INTO cash_movements (shift_id, type, amount_cents, reason, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+  );
+  for (let day = 13; day >= 0; day--) {
+    for (const uid of [cashierId, adminId]) {
+      const open = sqlDate(daysAgo(day, 7));
+      const closeAt = daysAgo(day, 19);
+      const close = sqlDate(closeAt > now ? now : closeAt); // never a closing time in the future
+      const took = db.prepare("SELECT 1 FROM payments WHERE user_id = ? AND created_at BETWEEN ? AND ? LIMIT 1").get(uid, open, close);
+      if (!took) continue;
+      const float = 500000;
+      const shiftId = Number(openShift.run(uid, float, open).lastInsertRowid);
+      for (const st of [attachSales, attachPayments, attachReturns]) st.run(shiftId, uid, open, close);
+      const cashIn = (
+        db.prepare("SELECT COALESCE(SUM(amount_cents), 0) AS c FROM payments WHERE shift_id = ? AND method = 'Cash'").get(shiftId) as { c: number }
+      ).c;
+      const cashOut = (
+        db.prepare("SELECT COALESCE(SUM(refund_cents), 0) AS c FROM returns WHERE shift_id = ? AND refund_method = 'Cash'").get(shiftId) as { c: number }
+      ).c;
+      let expected = float + cashIn - cashOut;
+      // Bank most of the takings mid-afternoon on busy days.
+      if (expected > 2_500_000) {
+        const drop = Math.floor((expected - float) / 100_000) * 100_000;
+        addCashMove.run(shiftId, "out", drop, "Banked at Equity Bank", uid, sqlDate(daysAgo(day, 15)));
+        expected -= drop;
+      }
+      if (rand() < 0.2) {
+        addCashMove.run(shiftId, "out", 15000, "Petty cash: milk and sugar", uid, sqlDate(daysAgo(day, 10)));
+        expected -= 15000;
+      }
+      if (day === 0 && uid === cashierId) continue; // still open
+      const variance = rand() < 0.75 ? 0 : pick([-5000, -2000, -10000, 1000, -50000]);
+      db.prepare(
+        "UPDATE shifts SET closed_at = ?, closed_by = ?, expected_cash_cents = ?, counted_cash_cents = ?, notes = ? WHERE id = ?",
+      ).run(close, uid, expected, expected + variance, variance < -20000 ? "Short — checking against receipts" : "", shiftId);
+      shiftCount++;
+    }
+  }
+
   // Leave a few items low or out of stock so alerts have something to show.
   const drain = (sku: string, left: number) => {
     const p = catalog.find((c) => c.sku === sku)!;
@@ -332,7 +380,7 @@ db.transaction(() => {
 
 console.log(
   `Seeded ${catalog.length} products, ${Object.keys(supplierByCategory).length} suppliers, ${poCount} purchase orders, ` +
-    `${returnCount} returns, ${expenseCount} expenses, ` +
+    `${returnCount} returns, ${expenseCount} expenses, ${shiftCount} closed till shifts, ` +
     `${customerIds.length} customers, ${invoice} sales into ${dbFile}`,
 );
 console.log("Sign in with admin@stockflow.local / admin1234 or cashier@stockflow.local / cashier1234");

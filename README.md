@@ -31,6 +31,7 @@ Demo accounts (created by the seed):
 - **Credit & payments** — sell on credit to a named customer with an optional deposit; record instalments by Cash, M-Pesa (with transaction code), Card or Bank Transfer until the invoice flips to paid. Per-customer credit limits (admin-set) are enforced at checkout. Every payment is kept in a ledger shown on the invoice and the customer's statement; Reports shows who owes what, aged 0–30 / 31–60 / 61–90 / 90+ days.
 - **Returns & refunds** (admin) — return some or all items from a sale, valued at the discounted price actually paid. Each item goes back to stock or is written off as damaged. A return first reduces anything still owed on the sale; only overpayment is refunded (Cash, M-Pesa with code, Card or Bank Transfer). Reports net returns out of revenue, profit and product/category figures in the period they happen. Sales with returns can't be cancelled.
 - **Expenses & profit and loss** (admin) — record running costs (rent, wages, utilities, transport, M-Pesa charges, custom categories) with payee, method and reference; filter by period and category, see spend by category, export CSV. Reports show a full P&L: revenue after returns − cost of goods = gross profit − expenses by category = net profit and net margin (also in the CSV export).
+- **Till & cash drawer** — each staff member opens their till with a float. Cash sales, credit payments and cash refunds are linked to the open till automatically (by database trigger, so nothing is missed), along with pay-ins and pay-outs such as banking or petty cash. At close, count the drawer with the KES note-and-coin counter; the system records expected vs counted and any shortage or overage, and produces a printable end-of-shift report. Admins see everyone's shifts; an optional setting requires an open till before selling or taking payments.
 - **Customers** — contact details, active/inactive, lifetime orders and spend, purchase history.
 - **Dashboard** — month-to-date revenue vs the same span last month, today's sales, pending payments, 7-day revenue chart, recent sales, low-stock watchlist.
 - **Reports** (admin) — any date range: revenue, orders, average order, gross profit and margin (using cost captured at sale time), collected vs outstanding, daily trend, revenue by category and payment method, top products and customers, inventory value. CSV export.
@@ -104,6 +105,8 @@ PATCH  /sales/:id/status {paid|cancelled}   GET  /sales/export.csv
 POST   /sales/:id/payments {amount, method, reference}
 POST   /sales/:id/returns {items: [{saleItemId, quantity, restock}], reason, refundMethod?, refundReference}   (admin)
 GET    /returns[?search&from&to]
+GET    /shifts/current   GET /shifts[?from&to&userId]   GET /shifts/:id
+POST   /shifts/open {openingFloat}   POST /shifts/:id/cash {type: in|out, amount, reason}   POST /shifts/:id/close {countedCash, notes}
 GET/POST /expenses[?from&to&category&search]   PATCH/DELETE /expenses/:id   GET /expenses/categories   GET /expenses/export.csv   (admin)
 GET    /reports/receivables (admin)        GET /customers?withBalance=true
 GET    /dashboard                  GET  /reports[?from&to] GET  /reports/export.csv

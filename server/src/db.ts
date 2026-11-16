@@ -168,6 +168,31 @@ CREATE TABLE IF NOT EXISTS expenses (
 );
 CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date);
 
+CREATE TABLE IF NOT EXISTS shifts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  opening_float_cents INTEGER NOT NULL CHECK (opening_float_cents >= 0),
+  opened_at TEXT NOT NULL DEFAULT (datetime('now')),
+  closed_at TEXT,
+  closed_by INTEGER REFERENCES users(id),
+  expected_cash_cents INTEGER,
+  counted_cash_cents INTEGER,
+  notes TEXT NOT NULL DEFAULT ''
+);
+-- One open till per person.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shifts_one_open ON shifts(user_id) WHERE closed_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS cash_movements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  shift_id INTEGER NOT NULL REFERENCES shifts(id),
+  type TEXT NOT NULL CHECK (type IN ('in', 'out')),
+  amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+  reason TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_cash_movements_shift ON cash_movements(shift_id);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -185,6 +210,7 @@ export const DEFAULT_SETTINGS: Record<string, string | number | boolean> = {
   dailySummary: true,
   largeTransactionReview: false,
   largeTransactionThreshold: 100000,
+  requireShiftForSales: false,
 };
 
 export function openDb(file: string): DB {
@@ -273,6 +299,25 @@ function migrate(db: DB) {
       AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.sale_id = s.id)
   `);
   db.exec(SALE_BALANCES_VIEW);
+
+  // Link money movements to the till that was open when they happened. Triggers make this automatic for
+  // every insert path, and avoid matching by timestamp (second resolution makes open/close boundaries ambiguous).
+  for (const table of ["sales", "payments", "returns"]) {
+    const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+    if (!cols.includes("shift_id")) db.exec(`ALTER TABLE ${table} ADD COLUMN shift_id INTEGER REFERENCES shifts(id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_shift ON ${table}(shift_id)`);
+    // Only rows created while the till was open are attached, so backfilled or imported historical rows
+    // (e.g. the payments backfill above) never land in someone's current till.
+    db.exec(`DROP TRIGGER IF EXISTS trg_${table}_shift`);
+    db.exec(`
+      CREATE TRIGGER trg_${table}_shift AFTER INSERT ON ${table}
+      WHEN NEW.shift_id IS NULL
+        AND NEW.created_at >= (SELECT opened_at FROM shifts WHERE user_id = NEW.user_id AND closed_at IS NULL)
+      BEGIN
+        UPDATE ${table} SET shift_id = (SELECT id FROM shifts WHERE user_id = NEW.user_id AND closed_at IS NULL)
+        WHERE id = NEW.id;
+      END`);
+  }
 }
 
 export const toCents = (amount: number) => Math.round(amount * 100);

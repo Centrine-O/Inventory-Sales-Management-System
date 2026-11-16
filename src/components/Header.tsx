@@ -15,7 +15,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
-import { useDashboard, useSearch, useSettings } from "@/hooks/api";
+import { useCurrentShift, useDashboard, useSearch, useSettings } from "@/hooks/api";
 import { initials } from "@/lib/format";
 import { mobileNavigation } from "./Sidebar";
 
@@ -96,6 +96,23 @@ function GlobalSearch() {
   );
 }
 
+function TillStatus() {
+  const { data: shift, isLoading } = useCurrentShift();
+  if (isLoading) return null;
+  return (
+    <Link
+      to="/app/till"
+      className={`hidden items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted sm:flex ${
+        shift ? "border-accent/40 text-accent" : "text-muted-foreground"
+      }`}
+      title={shift ? "Your till is open" : "Your till is closed"}
+    >
+      <span className={`h-2 w-2 rounded-full ${shift ? "bg-accent" : "bg-muted-foreground/50"}`} />
+      {shift ? "Till open" : "Till closed"}
+    </Link>
+  );
+}
+
 function Alerts() {
   const { data } = useDashboard();
   const { data: settings } = useSettings();
@@ -172,6 +189,7 @@ export const Header = () => {
 
         <div className="flex items-center gap-2 md:gap-4">
           <GlobalSearch />
+          <TillStatus />
           <Alerts />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
