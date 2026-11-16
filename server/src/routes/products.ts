@@ -50,6 +50,25 @@ const stockSchema = z.object({
   note: z.string().trim().max(200).default(""),
 });
 
+const assignSchema = z.object({
+  productIds: z.array(z.coerce.number().int().positive()).min(1, "Choose at least one product").max(1000),
+});
+
+/** EAN-13 check digit for a 12-digit body. */
+export function ean13CheckDigit(body: string) {
+  const sum = [...body].reduce((s, d, i) => s + Number(d) * (i % 2 === 0 ? 1 : 3), 0);
+  return String((10 - (sum % 10)) % 10);
+}
+
+/**
+ * An in-store EAN-13 for a product. GS1 reserves prefixes 20–29 for restricted (in-store) circulation,
+ * so these never clash with manufacturers' barcodes. Prefix 200 + the product id keeps them readable.
+ */
+export function inStoreBarcode(n: number) {
+  const body = `200${String(n).padStart(9, "0")}`;
+  return body + ean13CheckDigit(body);
+}
+
 const listSchema = z.object({
   search: z.string().trim().optional(),
   status: z.enum(["in_stock", "low_stock", "out_of_stock"]).optional(),
@@ -107,6 +126,31 @@ export function productsRouter(db: DB) {
       db.prepare("SELECT * FROM products WHERE sku = ? COLLATE NOCASE AND archived = 0").get(code)) as ProductRow | undefined;
     if (!row) throw new HttpError(404, `No product with barcode or SKU "${code}"`);
     res.json(mapProduct(row));
+  });
+
+  /** Give products without a barcode an in-store EAN-13 so they can be labelled and scanned. */
+  r.post("/assign-barcodes", requireRole("admin"), (req, res) => {
+    const { productIds } = assignSchema.parse(req.body);
+    const taken = db.prepare("SELECT 1 FROM products WHERE barcode = ?");
+    const updated = db.transaction(() =>
+      productIds.map((id) => {
+        const p = getProduct(id);
+        if (p.barcode) return p;
+        // Derived from the id; step past any code someone has already typed in by hand.
+        let n = p.id;
+        while (taken.get(inStoreBarcode(n))) n += 1_000_000;
+        const code = inStoreBarcode(n);
+        db.prepare("UPDATE products SET barcode = ?, updated_at = datetime('now') WHERE id = ?").run(code, p.id);
+        audit(db, req, {
+          action: "barcode_assigned",
+          entity: "product",
+          entityId: p.id,
+          summary: `Assigned in-store barcode ${code} to ${p.name} (${p.sku})`,
+        });
+        return getProduct(p.id);
+      }),
+    )();
+    res.json(updated.map(mapProduct));
   });
 
   r.get("/categories", (_req, res) => {

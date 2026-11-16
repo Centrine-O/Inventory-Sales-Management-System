@@ -155,3 +155,31 @@
     padding: 24px;
   }
 }
+
+/* Label printing: only the labels print, at the page size set for the chosen label stock. */
+#label-print-root {
+  display: none;
+}
+@media print {
+  html.printing-labels #root {
+    display: none;
+  }
+  html.printing-labels body,
+  html.printing-labels body * {
+    visibility: visible;
+  }
+  html.printing-labels body {
+    background: #fff;
+    min-height: 0;
+    margin: 0;
+  }
+  html.printing-labels #label-print-root {
+    display: block;
+  }
+  html.printing-labels .label-page {
+    break-after: page;
+  }
+  html.printing-labels .label-page:last-child {
+    break-after: auto;
+  }
+}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronsUpDown, Loader2, PackageCheck, Pencil, Printer, Send, Trash2, XCircle } from "lucide-react";
+import { Link } from "react-router-dom";
+import { ChevronsUpDown, Loader2, PackageCheck, Pencil, Printer, Send, Tag, Trash2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -534,6 +535,20 @@ export function PurchaseOrderDetailDialog({ poId, onOpenChange }: { poId: number
                 <Printer className="mr-2 h-4 w-4" />
                 Print
               </Button>
+              {po.items.some((i) => i.quantityReceived > 0) && (
+                // One label per unit received, ready to stick on the new stock.
+                <Button variant="outline" asChild>
+                  <Link
+                    to={`/app/labels?items=${po.items
+                      .filter((i) => i.quantityReceived > 0)
+                      .map((i) => `${i.productId}:${i.quantityReceived}`)
+                      .join(",")}`}
+                  >
+                    <Tag className="mr-2 h-4 w-4" />
+                    Labels for received stock
+                  </Link>
+                </Button>
+              )}
               {po.status === "draft" && (
                 <Button disabled={action.isPending} onClick={() => action.mutate({ id: po.id, action: "order" })}>
                   {action.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}

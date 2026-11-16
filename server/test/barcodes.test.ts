@@ -3,6 +3,7 @@ import request from "supertest";
 import bcrypt from "bcryptjs";
 import { openDb, type DB } from "../src/db.js";
 import { createApp } from "../src/app.js";
+import { inStoreBarcode } from "../src/routes/products.js";
 
 let db: DB;
 let app: ReturnType<typeof createApp>;
@@ -81,5 +82,28 @@ describe("barcodes", () => {
     await product({ sku: "S1", name: "Stapler", barcode: "6160000000017" });
     expect((await as(cashier).get("/products?search=6160000000017")).body).toHaveLength(1);
     expect((await as(cashier).get("/search?q=6160000000017")).body.products).toHaveLength(1);
+  });
+
+  it("assigns in-store EAN-13 barcodes to products without one, admin only", async () => {
+    const has = (await product({ sku: "H-1", barcode: "6161234567890" })).body;
+    const none = (await product({ sku: "N-1", name: "No Code" })).body;
+    const clash = (await product({ sku: "N-2", name: "Clash" })).body;
+    // Someone already typed the code "Clash" would get onto another product: assignment steps past it.
+    await product({ sku: "T-1", barcode: inStoreBarcode(clash.id) });
+
+    expect((await as(cashier).post("/products/assign-barcodes", { productIds: [none.id] })).status).toBe(403);
+    const res = await as(admin).post("/products/assign-barcodes", { productIds: [has.id, none.id, clash.id] });
+    expect(res.status).toBe(200);
+    const [a, b, c] = res.body;
+    expect(a.barcode).toBe("6161234567890"); // untouched
+    expect(b.barcode).toMatch(/^200\d{10}$/);
+    expect(b.barcode.slice(3, 12)).toBe(String(none.id).padStart(9, "0"));
+    expect(c.barcode).toMatch(/^200\d{10}$/);
+    expect(c.barcode.slice(3, 12)).toBe(String(clash.id + 1_000_000).padStart(9, "0"));
+
+    // The new code scans at checkout, and the change is in the activity log.
+    expect((await as(cashier).get(`/products/lookup?code=${b.barcode}`)).body.id).toBe(none.id);
+    const log = (await as(admin).get("/audit?action=barcode_assigned")).body.entries;
+    expect(log.map((e: { summary: string }) => e.summary)).toContain(`Assigned in-store barcode ${b.barcode} to No Code (N-1)`);
   });
 });

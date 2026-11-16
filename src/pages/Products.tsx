@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Plus, Search, MoreVertical, Edit, Trash2, Package, AlertTriangle, PackageX, Boxes, Eye } from "lucide-react";
+import { Plus, Search, MoreVertical, Edit, Trash2, Package, AlertTriangle, PackageX, Boxes, Eye, Tag } from "lucide-react";
 import { ConfirmDialog, MetricCard, PageHeader, StockBadge, TableLoading, TableMessage } from "@/components/common";
 import { ProductDetailDialog, ProductFormDialog, StockAdjustDialog } from "@/components/products/ProductDialogs";
 import { useCategories, useDeleteProduct, useProducts } from "@/hooks/api";
@@ -70,18 +70,26 @@ const Products = () => {
           title="Products"
           description="Manage stock levels, pricing, and reorder pressure across the catalog."
           actions={
-            isAdmin && (
-              <Button
-                className="bg-gradient-primary hover:bg-primary-dark"
-                onClick={() => {
-                  setEditing(null);
-                  setFormOpen(true);
-                }}
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                Add Product
+            <>
+              <Button variant="outline" asChild>
+                <Link to="/app/labels">
+                  <Tag className="mr-2 h-4 w-4" />
+                  Print labels
+                </Link>
               </Button>
-            )
+              {isAdmin && (
+                <Button
+                  className="bg-gradient-primary hover:bg-primary-dark"
+                  onClick={() => {
+                    setEditing(null);
+                    setFormOpen(true);
+                  }}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Product
+                </Button>
+              )}
+            </>
           }
         />
 
@@ -188,6 +196,12 @@ const Products = () => {
                             <DropdownMenuItem onClick={() => setAdjusting(p)}>
                               <Boxes className="mr-2 h-4 w-4" />
                               Adjust stock
+                            </DropdownMenuItem>
+                            <DropdownMenuItem asChild>
+                              <Link to={`/app/labels?items=${p.id}:1`}>
+                                <Tag className="mr-2 h-4 w-4" />
+                                Print labels
+                              </Link>
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem className="text-destructive" onClick={() => setDeleting(p)}>

@@ -113,6 +113,18 @@ export function useAdjustStock() {
   });
 }
 
+export function useAssignBarcodes() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (productIds: number[]) => api.post<Product[]>("/products/assign-barcodes", { productIds }),
+    onSuccess: (ps) => {
+      invalidate([["products"], ["product"], ["audit"]]);
+      toast.success(`Assigned barcode${ps.length === 1 ? "" : "s"} to ${ps.length} product${ps.length === 1 ? "" : "s"}`);
+    },
+    onError,
+  });
+}
+
 export function useDeleteProduct() {
   const invalidate = useInvalidate();
   return useMutation({
